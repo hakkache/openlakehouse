@@ -318,6 +318,8 @@ services:
       - ./infra/spark/test_iceberg_advanced.py:/opt/spark-apps/test_iceberg_advanced.py:ro
       - ./infra/spark/streaming_orders.py:/opt/spark-apps/streaming_orders.py:ro
       - ./infra/spark/cdc_sync.py:/opt/spark-apps/cdc_sync.py:ro
+      - ./infra/spark/ingest_fifa_data.py:/opt/spark-apps/ingest_fifa_data.py:ro
+      - ./docs/guided_project:/opt/spark-data:ro
       - spark-events:/opt/spark/spark-events
     networks:
       - openlakehouse-net
@@ -346,6 +348,7 @@ services:
     volumes:
       - ./infra/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./infra/spark/metrics.properties:/opt/spark/conf/metrics.properties:ro
+      - ./docs/guided_project:/opt/spark-data:ro
       - spark-events:/opt/spark/spark-events
     networks:
       - openlakehouse-net
@@ -398,6 +401,7 @@ services:
     volumes:
       - ./infra/jupyter/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ./infra/jupyter/examples:/opt/notebooks/examples:ro
+      - ./docs/guided_project:/opt/notebooks/guided_project
       - jupyter-notebooks:/opt/notebooks/work
       - spark-events:/opt/spark/spark-events
     networks:
@@ -432,6 +436,37 @@ services:
       retries: 15
       start_period: 30s
 
+  dagster-db-init:
+    image: postgres:16.4
+    container_name: openlakehouse-dagster-db-init
+    profiles: ["data-engineering", "full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-openlakehouse}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if ! psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DAGSTER_POSTGRES_DB:-dagster}'" | grep -q 1; then
+          createdb ${DAGSTER_POSTGRES_DB:-dagster}
+        fi
+        touch /tmp/dagster-db-init-done
+        tail -f /dev/null
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/dagster-db-init-done"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
   dagster-webserver:
     build:
       context: .
@@ -454,6 +489,8 @@ services:
       postgres:
         condition: service_healthy
       trino:
+        condition: service_healthy
+      dagster-db-init:
         condition: service_healthy
     networks:
       - openlakehouse-net
@@ -485,6 +522,8 @@ services:
         condition: service_healthy
       trino:
         condition: service_healthy
+      dagster-db-init:
+        condition: service_healthy
     networks:
       - openlakehouse-net
 
@@ -509,6 +548,37 @@ services:
       retries: 20
       start_period: 30s
 
+  openmetadata-db-init:
+    image: postgres:16.4
+    container_name: openlakehouse-openmetadata-db-init
+    profiles: ["data-engineering", "governance", "full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-openlakehouse}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if ! psql -tAc "SELECT 1 FROM pg_database WHERE datname='${OPENMETADATA_POSTGRES_DB:-openmetadata}'" | grep -q 1; then
+          createdb ${OPENMETADATA_POSTGRES_DB:-openmetadata}
+        fi
+        touch /tmp/openmetadata-db-init-done
+        tail -f /dev/null
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/openmetadata-db-init-done"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
   openmetadata-migrate:
     image: openmetadata/server:1.13.3
     container_name: openlakehouse-openmetadata-migrate
@@ -531,6 +601,8 @@ services:
       postgres:
         condition: service_healthy
       opensearch:
+        condition: service_healthy
+      openmetadata-db-init:
         condition: service_healthy
     networks:
       - openlakehouse-net

@@ -288,6 +288,11 @@ def _run_pipeline(run_id: str, pipeline_id: str, definition: dict, user: str) ->
                 elif node.kind == "destination":
                     target = compiled.destination_targets[node_id]
                     schema_name, table_name = target.split(".")[1], target.split(".")[2]
+                    # Polaris/Iceberg REST catalog requires the namespace to exist before
+                    # CREATE TABLE - unlike bronze (created explicitly by Spark jobs),
+                    # silver/gold are only ever targeted here, so ensure it up front.
+                    cursor.execute(f"CREATE SCHEMA IF NOT EXISTS iceberg.{schema_name}")
+                    cursor.fetchall()
                     exists = _table_exists(cursor, schema_name, table_name)
                     select_sql = compiled.destination_select_sql[node_id]
                     if exists:
