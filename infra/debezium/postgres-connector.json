@@ -1,0 +1,22 @@
+{
+  "name": "openlakehouse-postgres-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "openlakehouse",
+    "database.password": "openlakehouse_dev_password",
+    "database.dbname": "openlakehouse",
+    "topic.prefix": "openlakehouse",
+    "schema.include.list": "cdc",
+    "table.include.list": "cdc.customers,cdc.orders",
+    "plugin.name": "pgoutput",
+    "slot.name": "openlakehouse_cdc_slot",
+    "publication.name": "openlakehouse_cdc_publication",
+    "publication.autocreate.mode": "filtered",
+    "topic.creation.default.replication.factor": 1,
+    "topic.creation.default.partitions": 1,
+    "decimal.handling.mode": "double",
+    "tombstones.on.delete": "false"
+  }
+}

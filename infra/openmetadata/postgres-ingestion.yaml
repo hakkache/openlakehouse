@@ -1,0 +1,24 @@
+source:
+  type: postgres
+  serviceName: openlakehouse-postgres
+  serviceConnection:
+    config:
+      type: Postgres
+      username: openlakehouse
+      authType:
+        password: openlakehouse_dev_password
+      hostPort: postgres:5432
+      database: openlakehouse
+  sourceConfig:
+    config:
+      type: DatabaseMetadata
+sink:
+  type: metadata-rest
+  config: {}
+workflowConfig:
+  loggerLevel: INFO
+  openMetadataServerConfig:
+    hostPort: http://openmetadata-server:8585/api
+    authProvider: openmetadata
+    securityConfig:
+      jwtToken: "${OM_JWT_TOKEN}"

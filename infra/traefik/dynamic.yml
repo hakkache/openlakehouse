@@ -1,0 +1,38 @@
+http:
+  routers:
+    backend:
+      rule: "PathPrefix(`/api`)"
+      service: backend
+      entryPoints:
+        - web
+      priority: 100
+
+    jupyter:
+      rule: "PathPrefix(`/jupyter`)"
+      service: jupyter
+      entryPoints:
+        - web
+      priority: 50
+
+    frontend:
+      rule: "PathPrefix(`/`)"
+      service: frontend
+      entryPoints:
+        - web
+      priority: 1
+
+  services:
+    backend:
+      loadBalancer:
+        servers:
+          - url: "http://backend:8000"
+
+    jupyter:
+      loadBalancer:
+        servers:
+          - url: "http://jupyter:8888"
+
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:80"

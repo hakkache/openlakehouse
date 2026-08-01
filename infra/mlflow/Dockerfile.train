@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    mlflow==2.19.0 \
+    trino==0.331.0 \
+    pandas==2.2.3 \
+    scikit-learn==1.5.2 \
+    boto3
+
+COPY train_churn.py ./train_churn.py
+
+CMD ["python", "train_churn.py"]

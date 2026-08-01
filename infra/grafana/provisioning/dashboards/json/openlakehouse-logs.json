@@ -1,0 +1,21 @@
+{
+  "title": "OpenLakehouse - Centralized Logs",
+  "uid": "openlakehouse-logs",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "type": "logs",
+      "title": "All Container Logs",
+      "datasource": "Loki",
+      "gridPos": { "h": 24, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        { "expr": "{project=\"openlakehouse\"}", "refId": "A", "datasource": "Loki" }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    }
+  ]
+}

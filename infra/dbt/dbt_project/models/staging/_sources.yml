@@ -1,0 +1,12 @@
+version: 2
+
+sources:
+  - name: bronze
+    schema: bronze
+    tables:
+      - name: orders
+        description: Demo order events ingested from Kafka via Spark Structured Streaming (Phase 11).
+      - name: customers_cdc
+        description: Postgres cdc.customers table replicated via Debezium CDC (Phase 12).
+      - name: orders_cdc
+        description: Postgres cdc.orders table replicated via Debezium CDC (Phase 12).

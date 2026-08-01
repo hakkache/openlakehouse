@@ -1,0 +1,22 @@
+source:
+  type: trino
+  serviceName: openlakehouse-trino
+  serviceConnection:
+    config:
+      type: Trino
+      username: trino
+      hostPort: trino:8080
+      catalog: iceberg
+  sourceConfig:
+    config:
+      type: DatabaseMetadata
+sink:
+  type: metadata-rest
+  config: {}
+workflowConfig:
+  loggerLevel: INFO
+  openMetadataServerConfig:
+    hostPort: http://openmetadata-server:8585/api
+    authProvider: openmetadata
+    securityConfig:
+      jwtToken: "${OM_JWT_TOKEN}"

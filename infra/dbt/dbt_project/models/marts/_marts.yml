@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: mart_daily_kafka_sales
+    description: Daily order count/revenue rollup from the Kafka streaming demo pipeline (Phase 11).
+    columns:
+      - name: order_date
+        data_tests:
+          - unique
+          - not_null
+
+  - name: mart_customer_order_summary
+    description: Per-customer order count/revenue summary from the Debezium CDC pipeline (Phase 12).
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: mart_customer_churn_features
+    description: Per-customer churn features/label from the Kafka streaming demo pipeline, used to train the Phase 15 MLflow churn model.
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null

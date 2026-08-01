@@ -1,0 +1,12 @@
+---
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+rules:
+  - pattern: "trino.execution<name=QueryManager><>(RunningQueries|QueuedQueries|StartedQueries\\.TotalCount|CompletedQueries\\.TotalCount|FailedQueries\\.TotalCount): (.*)"
+    name: trino_query_manager_$1
+    value: $2
+  - pattern: "java.lang<type=Memory><HeapMemoryUsage>(committed|init|max|used)"
+    name: trino_jvm_heap_memory_$1_bytes
+  - pattern: "java.lang<type=Threading><>ThreadCount"
+    name: trino_jvm_thread_count
+  - pattern: ".*"

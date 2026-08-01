@@ -1,0 +1,72 @@
+{
+  "realm": "openlakehouse",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "ADMIN", "description": "Full administrative access" },
+      { "name": "DATA_ENGINEER", "description": "Build and run pipelines, jobs, notebooks" },
+      { "name": "DATA_SCIENTIST", "description": "ML experiments and models" },
+      { "name": "DATA_ANALYST", "description": "SQL and dashboards" },
+      { "name": "VIEWER", "description": "Read-only access" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "openlakehouse-web",
+      "name": "OpenLakehouse Web Frontend",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost/*", "http://localhost:5173/*"],
+      "webOrigins": ["http://localhost", "http://localhost:5173"]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin.user",
+      "email": "admin@openlakehouse.local",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "User",
+      "credentials": [{ "type": "password", "value": "openlakehouse", "temporary": false }],
+      "realmRoles": ["ADMIN"]
+    },
+    {
+      "username": "engineer.user",
+      "email": "engineer@openlakehouse.local",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Data",
+      "lastName": "Engineer",
+      "credentials": [{ "type": "password", "value": "openlakehouse", "temporary": false }],
+      "realmRoles": ["DATA_ENGINEER"]
+    },
+    {
+      "username": "analyst.user",
+      "email": "analyst@openlakehouse.local",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Data",
+      "lastName": "Analyst",
+      "credentials": [{ "type": "password", "value": "openlakehouse", "temporary": false }],
+      "realmRoles": ["DATA_ANALYST"]
+    },
+    {
+      "username": "viewer.user",
+      "email": "viewer@openlakehouse.local",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Read",
+      "lastName": "Viewer",
+      "credentials": [{ "type": "password", "value": "openlakehouse", "temporary": false }],
+      "realmRoles": ["VIEWER"]
+    }
+  ]
+}

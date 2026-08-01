@@ -1,0 +1,93 @@
+{
+  "title": "OpenLakehouse - Platform Overview",
+  "uid": "openlakehouse-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Service Availability",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        { "expr": "up", "legendFormat": "{{job}}", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value_and_name" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Backend API - HTTP Request Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "id": 2,
+      "targets": [
+        { "expr": "sum(rate(http_requests_total{job=\"openlakehouse-backend\"}[5m])) by (handler)", "legendFormat": "{{handler}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "PostgreSQL - Active Connections",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "id": 3,
+      "targets": [
+        { "expr": "pg_stat_database_numbackends", "legendFormat": "{{datname}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis - Memory Used (bytes)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "id": 4,
+      "targets": [
+        { "expr": "redis_memory_used_bytes", "legendFormat": "used", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka - Log Size per Topic/Partition",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "id": 5,
+      "targets": [
+        { "expr": "kafka_topic_partition_current_offset", "legendFormat": "{{topic}}-{{partition}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Trino - Running / Queued Queries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "id": 6,
+      "targets": [
+        { "expr": "trino_query_manager_runningqueries", "legendFormat": "running", "refId": "A" },
+        { "expr": "trino_query_manager_queuedqueries", "legendFormat": "queued", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Spark - Alive Workers / Running Apps",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "id": 7,
+      "targets": [
+        { "expr": "metrics_master_aliveWorkers_Value", "legendFormat": "alive workers", "refId": "A" },
+        { "expr": "metrics_master_apps_Value", "legendFormat": "running apps", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Frontend (nginx) - Active Connections",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+      "id": 8,
+      "targets": [
+        { "expr": "nginx_connections_active", "legendFormat": "active", "refId": "A" }
+      ]
+    }
+  ]
+}

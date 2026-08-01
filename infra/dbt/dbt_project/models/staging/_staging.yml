@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: stg_kafka_orders
+    description: One row per Kafka-streamed demo order.
+    columns:
+      - name: order_id
+        data_tests:
+          - unique
+          - not_null
+      - name: status
+        data_tests:
+          - accepted_values:
+              values: ['PENDING', 'PAID', 'SHIPPED', 'CANCELLED']
+
+  - name: stg_cdc_customers
+    description: One row per CDC-replicated customer.
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+      - name: email
+        data_tests:
+          - not_null
+
+  - name: stg_cdc_orders
+    description: One row per CDC-replicated order (current state, deletes removed by the Phase 12 MERGE sync).
+    columns:
+      - name: order_id
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null

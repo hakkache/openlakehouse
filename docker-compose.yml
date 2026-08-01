@@ -1,0 +1,1132 @@
+﻿name: openlakehouse
+
+x-core-profiles: &core-profiles
+  profiles: ["core", "security", "lakehouse", "data-engineering", "streaming", "ml", "ml-training", "governance", "monitoring", "bi", "ai", "full"]
+
+networks:
+  openlakehouse-net:
+    name: openlakehouse-net
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  spark-events:
+  jupyter-notebooks:
+  gitea-data:
+  prometheus-data:
+  loki-data:
+  grafana-data:
+  ollama-data:
+
+services:
+  traefik:
+    image: traefik:v3.2
+    container_name: openlakehouse-traefik
+    <<: *core-profiles
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+    ports:
+      - "${TRAEFIK_HTTP_PORT:-80}:80"
+      - "${TRAEFIK_DASHBOARD_PORT:-8080}:8080"
+    volumes:
+      - ./infra/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./infra/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/rawdata"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16.4
+    container_name: openlakehouse-postgres
+    <<: *core-profiles
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-openlakehouse}
+      POSTGRES_USER: ${POSTGRES_USER:-openlakehouse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openlakehouse} -d ${POSTGRES_DB:-openlakehouse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: openlakehouse-redis
+    <<: *core-profiles
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: openlakehouse-minio
+    <<: *core-profiles
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_PROMETHEUS_AUTH_TYPE: public
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: openlakehouse-backend
+    <<: *core-profiles
+    environment:
+      BACKEND_ENV: ${BACKEND_ENV:-development}
+      BACKEND_SECRET_KEY: ${BACKEND_SECRET_KEY:-change_me_dev_secret_key}
+      BACKEND_LOG_LEVEL: ${BACKEND_LOG_LEVEL:-INFO}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-openlakehouse}
+      POSTGRES_USER: ${POSTGRES_USER:-openlakehouse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_PUBLIC_URL: http://localhost:${KEYCLOAK_PORT:-8081}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-openlakehouse}
+      KEYCLOAK_CLIENT_ID: openlakehouse-web
+      OPENBAO_ADDR: http://openbao:8200
+      OPENBAO_TOKEN: ${OPENBAO_ROOT_TOKEN:-dev-root-token}
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+      TRINO_CATALOG: iceberg
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: openlakehouse-backend
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:1b}
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-openlakehouse}
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-olh-admin}
+      GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-openlakehouse_dev_password}
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-openlakehouse_dev_password}
+      SUPERSET_PUBLIC_URL: http://localhost:${SUPERSET_PORT:-8088}
+      GRAFANA_PUBLIC_URL: http://localhost:${GRAFANA_PORT:-3300}
+      DAGSTER_PUBLIC_URL: http://localhost:${DAGSTER_PORT:-3001}
+      KEYCLOAK_ADMIN_USER: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_password}
+      CONNECTION_ENCRYPTION_KEY: ${CONNECTION_ENCRYPTION_KEY:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      openbao:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        VITE_KEYCLOAK_URL: http://localhost:${KEYCLOAK_PORT:-8081}
+        VITE_KEYCLOAK_REALM: ${KEYCLOAK_REALM:-openlakehouse}
+        VITE_KEYCLOAK_CLIENT_ID: openlakehouse-web
+        VITE_JUPYTER_URL: ${VITE_JUPYTER_URL:-/jupyter}
+        VITE_JUPYTER_TOKEN: ${JUPYTER_TOKEN:-openlakehouse}
+    container_name: openlakehouse-frontend
+    <<: *core-profiles
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    container_name: openlakehouse-keycloak
+    <<: *core-profiles
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_password}
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+    ports:
+      - "${KEYCLOAK_PORT:-8081}:8080"
+    volumes:
+      - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+
+  openbao:
+    image: openbao/openbao:2.1.1
+    container_name: openlakehouse-openbao
+    <<: *core-profiles
+    command: server -dev -dev-listen-address=0.0.0.0:8200
+    environment:
+      BAO_DEV_ROOT_TOKEN_ID: ${OPENBAO_ROOT_TOKEN:-dev-root-token}
+      BAO_ADDR: http://127.0.0.1:8200
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "${OPENBAO_PORT:-8200}:8200"
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "bao", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  polaris:
+    image: apache/polaris:latest
+    container_name: openlakehouse-polaris
+    <<: *core-profiles
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      POLARIS_BOOTSTRAP_CREDENTIALS: POLARIS,root,${POLARIS_ROOT_SECRET:-polaris_dev_secret}
+      polaris.realm-context.realms: POLARIS
+      quarkus.otel.sdk.disabled: "true"
+    ports:
+      - "${POLARIS_PORT:-8181}:8181"
+      - "${POLARIS_MANAGEMENT_PORT:-8182}:8182"
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8182/q/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  polaris-bootstrap:
+    image: curlimages/curl:8.11.1
+    container_name: openlakehouse-polaris-bootstrap
+    <<: *core-profiles
+    depends_on:
+      polaris:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    environment:
+      POLARIS_URL: http://polaris:8181
+      CLIENT_ID: root
+      CLIENT_SECRET: ${POLARIS_ROOT_SECRET:-polaris_dev_secret}
+      CATALOG_NAME: lakehouse
+      STORAGE_LOCATION: s3://lakehouse/warehouse
+      MINIO_ENDPOINT: http://minio:9000
+      AWS_REGION_FOR_CATALOG: us-east-1
+    volumes:
+      - ./infra/polaris/bootstrap.sh:/bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap.sh"]
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/polaris-bootstrap-done"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
+
+  spark-master:
+    image: apache/spark:3.5.9-scala2.12-java17-python3-ubuntu
+    container_name: openlakehouse-spark-master
+    <<: *core-profiles
+    user: root
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host spark-master --port 7077 --webui-port 8080
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    ports:
+      - "${SPARK_MASTER_PORT:-7077}:7077"
+      - "${SPARK_MASTER_UI_PORT:-8090}:8080"
+    volumes:
+      - ./infra/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./infra/spark/metrics.properties:/opt/spark/conf/metrics.properties:ro
+      - ./infra/spark/test_iceberg.py:/opt/spark-apps/test_iceberg.py:ro
+      - ./infra/spark/test_iceberg_advanced.py:/opt/spark-apps/test_iceberg_advanced.py:ro
+      - ./infra/spark/streaming_orders.py:/opt/spark-apps/streaming_orders.py:ro
+      - ./infra/spark/cdc_sync.py:/opt/spark-apps/cdc_sync.py:ro
+      - spark-events:/opt/spark/spark-events
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  spark-worker:
+    image: apache/spark:3.5.9-scala2.12-java17-python3-ubuntu
+    container_name: openlakehouse-spark-worker
+    <<: *core-profiles
+    user: root
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077 --webui-port 8081
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    ports:
+      - "${SPARK_WORKER_UI_PORT:-8091}:8081"
+    volumes:
+      - ./infra/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./infra/spark/metrics.properties:/opt/spark/conf/metrics.properties:ro
+      - spark-events:/opt/spark/spark-events
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  spark-history:
+    image: apache/spark:3.5.9-scala2.12-java17-python3-ubuntu
+    container_name: openlakehouse-spark-history
+    <<: *core-profiles
+    user: root
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    ports:
+      - "${SPARK_HISTORY_PORT:-18080}:18080"
+    volumes:
+      - ./infra/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - spark-events:/opt/spark/spark-events
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18080"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  jupyter:
+    build:
+      context: ./infra/jupyter
+      dockerfile: Dockerfile
+    container_name: openlakehouse-jupyter
+    <<: *core-profiles
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-openlakehouse}
+      JUPYTER_BASE_URL: /jupyter/
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    volumes:
+      - ./infra/jupyter/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./infra/jupyter/examples:/opt/notebooks/examples:ro
+      - jupyter-notebooks:/opt/notebooks/work
+      - spark-events:/opt/spark/spark-events
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8888/jupyter/api"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  trino:
+    build:
+      context: ./infra/trino
+      dockerfile: Dockerfile
+    container_name: openlakehouse-trino
+    <<: *core-profiles
+    ports:
+      - "${TRINO_PORT:-8082}:8080"
+      - "${TRINO_METRICS_PORT:-9270}:9270"
+    volumes:
+      - ./infra/trino/catalog:/etc/trino/catalog:ro
+    depends_on:
+      polaris:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  dagster-webserver:
+    build:
+      context: .
+      dockerfile: infra/dagster/Dockerfile
+    container_name: openlakehouse-dagster-webserver
+    profiles: ["data-engineering", "full"]
+    command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-w", "/opt/dagster/dagster_home/workspace.yaml"]
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-openlakehouse}
+      POSTGRES_USER: ${POSTGRES_USER:-openlakehouse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+      DAGSTER_PG_DB: ${DAGSTER_POSTGRES_DB:-dagster}
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+    ports:
+      - "${DAGSTER_PORT:-3001}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  dagster-daemon:
+    build:
+      context: .
+      dockerfile: infra/dagster/Dockerfile
+    container_name: openlakehouse-dagster-daemon
+    profiles: ["data-engineering", "full"]
+    command: ["dagster-daemon", "run", "-w", "/opt/dagster/dagster_home/workspace.yaml"]
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-openlakehouse}
+      POSTGRES_USER: ${POSTGRES_USER:-openlakehouse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+      DAGSTER_PG_DB: ${DAGSTER_POSTGRES_DB:-dagster}
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+
+  opensearch:
+    image: opensearchproject/opensearch:3.4.0
+    container_name: openlakehouse-opensearch
+    profiles: ["data-engineering", "governance", "full"]
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_ADMIN_PASSWORD:-OpenLakehouse_password123!!!}
+      indices.query.bool.max_clause_count: "4096"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "${OPENSEARCH_PORT:-9200}:9200"
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health?pretty | grep -qE 'green|yellow' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  openmetadata-migrate:
+    image: openmetadata/server:1.13.3
+    container_name: openlakehouse-openmetadata-migrate
+    profiles: ["data-engineering", "governance", "full"]
+    command: ["./bootstrap/openmetadata-ops.sh", "migrate"]
+    restart: "no"
+    environment:
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_SCHEME: postgresql
+      DB_USER: ${POSTGRES_USER:-openlakehouse}
+      DB_USER_PASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+      DB_HOST: ${POSTGRES_HOST:-postgres}
+      DB_PORT: ${POSTGRES_PORT:-5432}
+      OM_DATABASE: ${OPENMETADATA_POSTGRES_DB:-openmetadata}
+      SEARCH_TYPE: opensearch
+      ELASTICSEARCH_HOST: opensearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEME: http
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+
+  openmetadata-server:
+    image: openmetadata/server:1.13.3
+    container_name: openlakehouse-openmetadata-server
+    profiles: ["data-engineering", "governance", "full"]
+    environment:
+      OPENMETADATA_CLUSTER_NAME: openlakehouse
+      SERVERPORT: "8585"
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_SCHEME: postgresql
+      DB_USER: ${POSTGRES_USER:-openlakehouse}
+      DB_USER_PASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+      DB_HOST: ${POSTGRES_HOST:-postgres}
+      DB_PORT: ${POSTGRES_PORT:-5432}
+      OM_DATABASE: ${OPENMETADATA_POSTGRES_DB:-openmetadata}
+      SEARCH_TYPE: opensearch
+      ELASTICSEARCH_HOST: opensearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEME: http
+      PIPELINE_SERVICE_CLIENT_ENABLED: "false"
+      AUTHENTICATION_PROVIDER: basic
+    ports:
+      - "${OPENMETADATA_PORT:-8585}:8585"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      openmetadata-migrate:
+        condition: service_completed_successfully
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8586/healthcheck"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: openlakehouse-kafka
+    profiles: ["streaming", "monitoring", "full"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:${KAFKA_HOST_PORT:-9094}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: "b3Rlbmxha2Vob3VzZS1rYWZrYQ"
+    ports:
+      - "${KAFKA_HOST_PORT:-9094}:9094"
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+
+  debezium-connect:
+    image: debezium/connect:2.7.3.Final
+    container_name: openlakehouse-debezium-connect
+    profiles: ["streaming", "full"]
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: openlakehouse-debezium
+      CONFIG_STORAGE_TOPIC: debezium_connect_configs
+      OFFSET_STORAGE_TOPIC: debezium_connect_offsets
+      STATUS_STORAGE_TOPIC: debezium_connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    ports:
+      - "${DEBEZIUM_CONNECT_PORT:-8083}:8083"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  debezium-connector-register:
+    image: curlimages/curl:8.11.1
+    container_name: openlakehouse-debezium-connector-register
+    profiles: ["streaming", "full"]
+    depends_on:
+      debezium-connect:
+        condition: service_healthy
+    volumes:
+      - ./infra/debezium/register-connector.sh:/register-connector.sh:ro
+      - ./infra/debezium/postgres-connector.json:/postgres-connector.json:ro
+    entrypoint: ["/bin/sh", "/register-connector.sh"]
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/connector-registered-done"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  dbt:
+    build:
+      context: ./infra/dbt
+    container_name: openlakehouse-dbt
+    profiles: ["data-engineering", "full"]
+    volumes:
+      - ./infra/dbt/dbt_project:/usr/app/dbt
+      - ./infra/dbt/profiles:/root/.dbt:ro
+    depends_on:
+      trino:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+
+  superset-db-init:
+    image: postgres:16.4
+    container_name: openlakehouse-superset-db-init
+    profiles: ["bi", "full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-openlakehouse}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if ! psql -tAc "SELECT 1 FROM pg_database WHERE datname='superset'" | grep -q 1; then
+          createdb superset
+        fi
+        touch /tmp/superset-db-init-done
+        tail -f /dev/null
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/superset-db-init-done"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  superset:
+    build:
+      context: .
+      dockerfile: infra/superset/Dockerfile
+    container_name: openlakehouse-superset
+    profiles: ["bi", "full"]
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-openlakehouse_dev_superset_secret_key}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-openlakehouse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+      SUPERSET_METADATA_DB: superset
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-openlakehouse_dev_password}
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    depends_on:
+      superset-db-init:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  mlflow-db-init:
+    image: postgres:16.4
+    container_name: openlakehouse-mlflow-db-init
+    profiles: ["ml", "ml-training", "full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-openlakehouse}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if ! psql -tAc "SELECT 1 FROM pg_database WHERE datname='mlflow'" | grep -q 1; then
+          createdb mlflow
+        fi
+        touch /tmp/mlflow-db-init-done
+        tail -f /dev/null
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/mlflow-db-init-done"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  minio-mlflow-bucket-init:
+    image: minio/mc:RELEASE.2024-11-17T19-35-25Z
+    container_name: openlakehouse-minio-mlflow-bucket-init
+    profiles: ["ml", "ml-training", "full"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb -p local/mlflow
+        touch /tmp/mlflow-bucket-init-done
+        tail -f /dev/null
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/mlflow-bucket-init-done"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  mlflow:
+    build:
+      context: ./infra/mlflow
+    container_name: openlakehouse-mlflow
+    profiles: ["ml", "ml-training", "full"]
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://${POSTGRES_USER:-openlakehouse}:${POSTGRES_PASSWORD:-openlakehouse_dev_password}@postgres:5432/mlflow
+      --default-artifact-root s3://mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    depends_on:
+      mlflow-db-init:
+        condition: service_healthy
+      minio-mlflow-bucket-init:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  mlflow-churn-training:
+    build:
+      context: ./infra/mlflow
+      dockerfile: Dockerfile.train
+    container_name: openlakehouse-mlflow-churn-training
+    profiles: ["ml-training"]
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+      TRINO_CATALOG: iceberg
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+
+  gitea-db-init:
+    image: postgres:16.4
+    container_name: openlakehouse-gitea-db-init
+    profiles: ["governance", "full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-openlakehouse}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if ! psql -tAc "SELECT 1 FROM pg_database WHERE datname='gitea'" | grep -q 1; then
+          createdb gitea
+        fi
+        touch /tmp/gitea-db-init-done
+        tail -f /dev/null
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/gitea-db-init-done"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  gitea:
+    image: gitea/gitea:1.22.3
+    container_name: openlakehouse-gitea
+    profiles: ["governance", "full"]
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: postgres:5432
+      GITEA__database__NAME: gitea
+      GITEA__database__USER: ${POSTGRES_USER:-openlakehouse}
+      GITEA__database__PASSWD: ${POSTGRES_PASSWORD:-openlakehouse_dev_password}
+      GITEA__server__DOMAIN: localhost
+      GITEA__server__ROOT_URL: http://localhost:${GITEA_HTTP_PORT:-3010}/
+      GITEA__server__SSH_DOMAIN: localhost
+      GITEA__server__DISABLE_SSH: "true"
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+    ports:
+      - "${GITEA_HTTP_PORT:-3010}:3000"
+    volumes:
+      - gitea-data:/data
+    depends_on:
+      gitea-db-init:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  gitea-init:
+    image: gitea/gitea:1.22.3
+    container_name: openlakehouse-gitea-init
+    profiles: ["governance", "full"]
+    user: "1000:1000"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        gitea admin user create -c /data/gitea/conf/app.ini \
+          --username "${GITEA_ADMIN_USER:-olh-admin}" \
+          --password "${GITEA_ADMIN_PASSWORD:-openlakehouse_dev_password}" \
+          --email admin@openlakehouse.local \
+          --admin --must-change-password=false || true
+        touch /tmp/gitea-init-done
+        tail -f /dev/null
+    volumes:
+      - gitea-data:/data
+    depends_on:
+      gitea:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/gitea-init-done"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: openlakehouse-postgres-exporter
+    profiles: ["monitoring", "full"]
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-openlakehouse}:${POSTGRES_PASSWORD:-openlakehouse_dev_password}@postgres:5432/${POSTGRES_DB:-openlakehouse}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9187/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: openlakehouse-redis-exporter
+    profiles: ["monitoring", "full"]
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9121/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: openlakehouse-kafka-exporter
+    profiles: ["streaming", "monitoring", "full"]
+    command: ["--kafka.server=kafka:9092"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.3.0
+    container_name: openlakehouse-nginx-exporter
+    profiles: ["monitoring", "full"]
+    command: ["--nginx.scrape-uri=http://frontend:80/nginx_status"]
+    depends_on:
+      frontend:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    container_name: openlakehouse-otel-collector
+    profiles: ["monitoring", "full"]
+    command: ["--config=/etc/otel-collector-config.yml"]
+    volumes:
+      - ./infra/otel/otel-collector-config.yml:/etc/otel-collector-config.yml:ro
+    networks:
+      - openlakehouse-net
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: openlakehouse-prometheus
+    profiles: ["monitoring", "full"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: openlakehouse-loki
+    profiles: ["monitoring", "full"]
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./infra/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  promtail:
+    image: grafana/promtail:3.3.2
+    container_name: openlakehouse-promtail
+    profiles: ["monitoring", "full"]
+    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    volumes:
+      - ./infra/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: openlakehouse-grafana
+    profiles: ["monitoring", "full"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-openlakehouse_dev_password}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3300}:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  ollama:
+    image: ollama/ollama:0.32.5
+    container_name: openlakehouse-ollama
+    profiles: ["ai", "full"]
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  ollama-init:
+    image: ollama/ollama:0.32.5
+    container_name: openlakehouse-ollama-init
+    profiles: ["ai", "full"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        OLLAMA_HOST=ollama:11434 ollama pull ${OLLAMA_MODEL:-llama3.2:1b}
+        touch /tmp/ollama-init-done
+        tail -f /dev/null
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ollama-init-done"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
+
+
+

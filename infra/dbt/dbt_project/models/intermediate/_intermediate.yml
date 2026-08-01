@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: int_cdc_orders_enriched
+    description: CDC orders joined with their customer's name/email.
+    columns:
+      - name: order_id
+        data_tests:
+          - unique
+          - not_null

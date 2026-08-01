@@ -1,0 +1,21 @@
+name: openlakehouse
+version: "1.0.0"
+config-version: 2
+profile: openlakehouse
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  openlakehouse:
+    staging:
+      +materialized: table
+      +schema: dbt_staging
+    intermediate:
+      +materialized: table
+      +schema: dbt_intermediate
+    marts:
+      +materialized: table
+      +schema: dbt_marts

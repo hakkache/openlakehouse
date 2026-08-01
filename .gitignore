@@ -1,0 +1,44 @@
+# Environment
+.env
+*.env.local
+
+# Node
+node_modules/
+dist/
+frontend/dist/
+frontend/node_modules/
+.vite/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+backend/.venv/
+
+# Docker volumes (local dev data, not for VCS)
+data/
+volumes/
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+coverage/
+htmlcov/
+.coverage
+playwright-report/
+test-results/
