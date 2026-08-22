@@ -607,9 +607,6 @@ Everything is in named Docker volumes on your machine (`postgres-data`, `minio-d
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — system & network architecture, data flow, DB model
-- [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) — phase-by-phase build & test log
-- [docs/GUIDED_PROJECT.md](docs/GUIDED_PROJECT.md) — a hands-on tutorial project to build on the platform
-- [docs/IMAGE_PROMPTS.md](docs/IMAGE_PROMPTS.md) — AI image-generation prompts for architecture/marketing visuals
 
 ## License
 
