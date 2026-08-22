@@ -2,9 +2,21 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from croniter import croniter
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-NodeKind = Literal["source", "transform", "quality", "destination"]
+NodeKind = Literal[
+    "source",
+    "transform",
+    "quality",
+    "destination",
+    "variable",
+    "code",
+    "control",
+    "api_ingestion",
+    "sub_pipeline",
+    "dbt",
+]
 
 # Node "type" values the visual builder can offer. The compiler fully supports the
 # ones documented in docs/IMPLEMENTATION_STATUS.md; others are accepted by the schema
@@ -29,6 +41,17 @@ TRANSFORM_TYPES = {
 }
 QUALITY_TYPES = {"not_null", "unique", "range", "regex", "schema", "freshness", "row_count"}
 DESTINATION_TYPES = {"minio", "iceberg_bronze", "iceberg_silver", "iceberg_gold", "postgresql", "kafka"}
+
+# Advanced node kinds (executed step-by-step by app.core.pipeline_executor, not
+# compiled into the single-SQL-statement engine in pipeline_compiler.py). See
+# pipeline_executor.py's module docstring for the execution model.
+VARIABLE_TYPES = {"literal", "from_query"}
+CODE_TYPES = {"sql", "python", "pyspark"}
+CONTROL_TYPES = {"if", "for_each"}
+API_INGESTION_TYPES = {"rest_get", "rest_post"}
+SUB_PIPELINE_TYPES = {"call"}
+# `select` in config is a dbt node selector (model name, `tag:x`, `path:...`, etc.).
+DBT_TYPES = {"run", "test", "build"}
 
 
 class PipelineNode(BaseModel):
@@ -57,6 +80,19 @@ class PipelineDefinition(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     schedule: str | None = None
 
+    @field_validator("schedule")
+    @classmethod
+    def _validate_schedule(cls, v: str | None) -> str | None:
+        """Real cron validation - a per-pipeline `schedule` is picked up and executed by
+        the Dagster sensor in infra/dagster/repository.py, so an invalid cron here would
+        otherwise fail silently instead of failing fast at save time."""
+        if v is None or not v.strip():
+            return None
+        v = v.strip()
+        if not croniter.is_valid(v):
+            raise ValueError(f"'{v}' is not a valid cron expression, e.g. '0 */6 * * *'")
+        return v
+
 
 class PipelineCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
@@ -77,12 +113,17 @@ class PipelineRead(BaseModel):
 
 class CompiledNode(BaseModel):
     node_id: str
-    sql: str
+    kind: str = ""
+    type: str = ""
+    sql: str = ""
+    status: Literal["ok", "error"] = "ok"
+    error: str | None = None
 
 
 class CompileResult(BaseModel):
     nodes: list[CompiledNode]
-    full_sql: str
+    full_sql: str = ""
+    mode: Literal["sql", "advanced"] = "sql"
 
 
 class NodeRunStatus(BaseModel):
@@ -91,6 +132,10 @@ class NodeRunStatus(BaseModel):
     message: str | None = None
     row_count: int | None = None
     duration_ms: int | None = None
+    started_at: datetime | None = None
+    sequence: int | None = None
+    iteration_index: int | None = None
+    parent_node_id: str | None = None
 
 
 class PipelineRunStatus(BaseModel):

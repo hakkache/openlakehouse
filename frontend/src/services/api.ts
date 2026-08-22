@@ -10,6 +10,24 @@ class ApiError extends Error {
   }
 }
 
+/** FastAPI error bodies are JSON (`{"detail": "..."}` or `{"detail": [{"msg": "..."}]}` for
+ * Pydantic validation errors) - extract a clean, human-readable message instead of showing
+ * raw JSON to the user. */
+function parseErrorMessage(status: number, bodyText: string): string {
+  if (!bodyText) return `Request failed with status ${status}`
+  try {
+    const parsed = JSON.parse(bodyText)
+    const detail = parsed?.detail
+    if (typeof detail === 'string') return detail
+    if (Array.isArray(detail)) {
+      return detail.map((d: { msg?: string }) => d?.msg ?? JSON.stringify(d)).join('; ')
+    }
+    return bodyText
+  } catch {
+    return bodyText
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -33,8 +51,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   })
 
   if (!response.ok) {
-    const body = await response.text()
-    throw new ApiError(response.status, body || response.statusText)
+    const bodyText = await response.text()
+    throw new ApiError(response.status, parseErrorMessage(response.status, bodyText))
   }
 
   if (response.status === 204) {
@@ -42,6 +60,54 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   return (await response.json()) as T
+}
+
+/** Manually parses a `text/event-stream` response instead of using the browser's native
+ * EventSource, because EventSource cannot send an Authorization header - this app is
+ * authenticated via Keycloak bearer tokens, not cookies, so a plain `new EventSource(url)`
+ * would 401. Calls `onEvent` once per `data: {...}` line until the stream ends (server
+ * closes it once the run reaches SUCCESS/FAILED) or `signal` aborts it. */
+async function streamPipelineRun(
+  runId: string,
+  onEvent: (status: PipelineRunStatus) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers: Record<string, string> = { Accept: 'text/event-stream' }
+  if (keycloak.authenticated) {
+    try {
+      await keycloak.updateToken(30)
+    } catch {
+      // token refresh failed; request proceeds unauthenticated and the API will 401
+    }
+    if (keycloak.token) headers.Authorization = `Bearer ${keycloak.token}`
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/pipelines/runs/${runId}/stream`, { headers, signal })
+  if (!response.ok || !response.body) {
+    throw new ApiError(response.status, `Failed to open run status stream (${response.status})`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) return
+    buffer += decoder.decode(value, { stream: true })
+    let sepIndex: number
+    while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
+      const rawEvent = buffer.slice(0, sepIndex)
+      buffer = buffer.slice(sepIndex + 2)
+      const dataLine = rawEvent.split('\n').find((l) => l.startsWith('data:'))
+      if (dataLine) {
+        try {
+          onEvent(JSON.parse(dataLine.slice(5).trim()) as PipelineRunStatus)
+        } catch {
+          // ignore a malformed/partial chunk
+        }
+      }
+    }
+  }
 }
 
 export interface DependencyStatus {
@@ -73,10 +139,12 @@ export interface MeResponse {
 }
 
 export type QueryExecutionStatus = 'RUNNING' | 'FINISHED' | 'FAILED' | 'CANCELLED'
+export type QueryEngine = 'trino' | 'spark'
 
 export interface QueryStatus {
   id: string
   status: QueryExecutionStatus
+  engine: QueryEngine
   columns: string[] | null
   rows: unknown[][] | null
   row_count: number | null
@@ -88,12 +156,27 @@ export interface QueryExecutionRead {
   id: string
   trino_query_id: string | null
   sql_text: string
+  engine: QueryEngine
   status: QueryExecutionStatus
   row_count: number | null
   duration_ms: number | null
   error: string | null
   executed_by: string
   created_at: string
+}
+
+export interface SparkCodeStatus {
+  id: string
+  status: QueryExecutionStatus
+  output: string | null
+  error: string | null
+  duration_ms: number | null
+}
+
+export interface SparkCodeSessionStatus {
+  running: boolean
+  idle_seconds: number | null
+  idle_timeout_seconds: number
 }
 
 export interface SavedQuery {
@@ -104,7 +187,17 @@ export interface SavedQuery {
   created_at: string
 }
 
-export type NodeKind = 'source' | 'transform' | 'quality' | 'destination'
+export type NodeKind =
+  | 'source'
+  | 'transform'
+  | 'quality'
+  | 'destination'
+  | 'variable'
+  | 'code'
+  | 'control'
+  | 'api_ingestion'
+  | 'sub_pipeline'
+  | 'dbt'
 
 export interface PipelineNode {
   id: string
@@ -143,12 +236,17 @@ export interface PipelineRead {
 
 export interface CompiledNode {
   node_id: string
+  kind: string
+  type: string
   sql: string
+  status: 'ok' | 'error'
+  error: string | null
 }
 
 export interface CompileResult {
   nodes: CompiledNode[]
   full_sql: string
+  mode: 'sql' | 'advanced'
 }
 
 export type PipelineNodeStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED'
@@ -160,6 +258,10 @@ export interface NodeRunStatus {
   message: string | null
   row_count: number | null
   duration_ms: number | null
+  started_at: string | null
+  sequence: number | null
+  iteration_index: number | null
+  parent_node_id: string | null
 }
 
 export interface PipelineRunStatus {
@@ -196,6 +298,54 @@ export interface AssistantStatus {
   detail: string | null
 }
 
+export interface DbtModelInfo {
+  name: string
+  resource_type: string
+  description: string
+  original_file_path: string | null
+  schema_name: string | null
+}
+
+export type DbtRunStatus = 'SUCCESS' | 'FAILED'
+
+export interface DbtRunRead {
+  id: string
+  command: 'run' | 'test' | 'build'
+  select: string | null
+  full_refresh: boolean
+  status: DbtRunStatus
+  return_code: number
+  triggered_by: string
+  started_at: string
+  finished_at: string | null
+}
+
+export interface DbtRunDetail extends DbtRunRead {
+  stdout: string
+  stderr: string
+}
+
+export type DbtElementType = 'model' | 'macro' | 'snapshot' | 'test'
+export type DbtModelLayer = 'staging' | 'intermediate' | 'marts'
+
+export interface DbtFileNode {
+  path: string
+  element_type: string
+  name: string
+}
+
+export interface DbtFileContent {
+  path: string
+  content: string
+}
+
+export interface DbtFileCreateRequest {
+  element_type: DbtElementType
+  layer?: DbtModelLayer | null
+  name: string
+  content: string
+}
+
 export const api = {
   getHealth: () => request<HealthResponse>('/v1/health'),
   getMe: () => request<MeResponse>('/v1/auth/me'),
@@ -212,15 +362,26 @@ export const api = {
     }),
   deleteWorkspace: (id: string) =>
     request<void>(`/v1/workspaces/${id}`, { method: 'DELETE' }),
-  submitQuery: (sql: string) =>
+  submitQuery: (sql: string, engine: QueryEngine = 'trino') =>
     request<QueryStatus>('/v1/sql/queries', {
       method: 'POST',
-      body: JSON.stringify({ sql }),
+      body: JSON.stringify({ sql, engine }),
     }),
   getQueryStatus: (id: string) => request<QueryStatus>(`/v1/sql/queries/${id}`),
   cancelQuery: (id: string) =>
     request<void>(`/v1/sql/queries/${id}/cancel`, { method: 'POST' }),
   listQueryHistory: () => request<QueryExecutionRead[]>('/v1/sql/history'),
+  submitSparkCode: (code: string) =>
+    request<SparkCodeStatus>('/v1/spark-code/jobs', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+  getSparkCodeStatus: (id: string) => request<SparkCodeStatus>(`/v1/spark-code/jobs/${id}`),
+  cancelSparkCode: (id: string) =>
+    request<void>(`/v1/spark-code/jobs/${id}/cancel`, { method: 'POST' }),
+  getSparkCodeSessionStatus: () => request<SparkCodeSessionStatus>('/v1/spark-code/session/status'),
+  stopSparkCodeSession: () =>
+    request<void>('/v1/spark-code/session/stop', { method: 'POST' }),
   listSavedQueries: () => request<SavedQuery[]>('/v1/sql/saved'),
   createSavedQuery: (name: string, sqlText: string) =>
     request<SavedQuery>('/v1/sql/saved', {
@@ -254,6 +415,7 @@ export const api = {
     request<PipelineRunStatus>(`/v1/pipelines/${id}/run`, { method: 'POST' }),
   getPipelineRun: (runId: string) =>
     request<PipelineRunStatus>(`/v1/pipelines/runs/${runId}`),
+  streamPipelineRun,
   listPipelineRuns: (id: string) =>
     request<PipelineRunRead[]>(`/v1/pipelines/${id}/runs`),
   getLineage: () => request<LineageGraph>('/v1/pipelines/lineage'),
@@ -266,6 +428,12 @@ export const api = {
       body: JSON.stringify({ messages }),
     }),
   getComputeStatus: () => request<ComputeStatus>('/v1/compute/status'),
+  killSparkApplication: (appId: string) =>
+    request<void>(`/v1/compute/spark/applications/${encodeURIComponent(appId)}/kill`, { method: 'POST' }),
+  killTrinoQuery: (queryId: string) =>
+    request<void>(`/v1/compute/trino/queries/${encodeURIComponent(queryId)}/kill`, { method: 'POST' }),
+  killJupyterKernel: (kernelId: string) =>
+    request<void>(`/v1/compute/jupyter/kernels/${encodeURIComponent(kernelId)}/kill`, { method: 'POST' }),
   listCatalogs: () => request<string[]>('/v1/catalog/catalogs'),
   listSchemas: (catalog: string) =>
     request<string[]>(`/v1/catalog/schemas?catalog=${encodeURIComponent(catalog)}`),
@@ -280,6 +448,10 @@ export const api = {
   previewTable: (catalog: string, schema: string, table: string, limit = 50) =>
     request<TablePreview>(
       `/v1/catalog/preview?catalog=${encodeURIComponent(catalog)}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}&limit=${limit}`,
+    ),
+  getErDiagram: (catalog: string, schema: string) =>
+    request<ERDiagram>(
+      `/v1/catalog/er-diagram?catalog=${encodeURIComponent(catalog)}&schema=${encodeURIComponent(schema)}`,
     ),
   getMlStatus: () => request<MLStatus>('/v1/ml/status'),
   getExperimentRuns: (experimentId: string) =>
@@ -296,7 +468,21 @@ export const api = {
     }),
   getDashboardsStatus: () => request<DashboardsStatus>('/v1/dashboards/status'),
   getMonitoringStatus: () => request<MonitoringStatus>('/v1/monitoring/status'),
+  getDbtStatus: () => request<{ available: boolean }>('/v1/dbt/status'),
+  getDbtModels: () => request<DbtModelInfo[]>('/v1/dbt/models'),
+  getDbtRuns: () => request<DbtRunRead[]>('/v1/dbt/runs'),
+  getDbtRun: (runId: string) => request<DbtRunDetail>(`/v1/dbt/runs/${runId}`),
+  runDbt: (body: { command: 'run' | 'test' | 'build'; select?: string | null; full_refresh?: boolean }) =>
+    request<DbtRunDetail>('/v1/dbt/run', { method: 'POST', body: JSON.stringify(body) }),
+  getDbtFiles: () => request<DbtFileNode[]>('/v1/dbt/files'),
+  getDbtFileContent: (path: string) => request<DbtFileContent>(`/v1/dbt/files/content?path=${encodeURIComponent(path)}`),
+  createDbtFile: (body: DbtFileCreateRequest) =>
+    request<DbtFileContent>('/v1/dbt/files', { method: 'POST', body: JSON.stringify(body) }),
   getJobsStatus: () => request<JobsStatus>('/v1/jobs/status'),
+  triggerPipelineJob: (pipelineId: string) =>
+    request<TriggerRunResponse>(`/v1/jobs/pipelines/${pipelineId}/trigger`, { method: 'POST' }),
+  terminateJobRun: (dagsterRunId: string) =>
+    request<void>(`/v1/jobs/runs/${dagsterRunId}/terminate`, { method: 'POST' }),
   getAdminOverview: () => request<AdminOverview>('/v1/admin/overview'),
   listConnections: () => request<ConnectionRead[]>('/v1/connections'),
   getConnection: (id: string) => request<ConnectionRead>(`/v1/connections/${id}`),
@@ -324,6 +510,10 @@ export const api = {
 export interface LineageGraphNode {
   id: string
   label: string
+  layer: 'bronze' | 'silver' | 'gold' | 'other'
+  last_status: string | null
+  last_run_at: string | null
+  last_row_count: number | null
 }
 
 export interface LineageGraphEdge {
@@ -400,10 +590,42 @@ export interface JupyterStatus {
   connections: number
 }
 
+export interface SparkApplication {
+  id: string
+  name: string
+  user: string
+  cores: number
+  memory_per_executor_mb: number
+  submit_date: string
+  state: string
+  duration_ms: number
+  running: boolean
+}
+
+export interface TrinoQuery {
+  id: string
+  query: string
+  user: string
+  state: string
+  elapsed_time: string
+  queued_time: string
+}
+
+export interface JupyterKernel {
+  id: string
+  name: string
+  execution_state: string
+  connections: number
+  last_activity: string
+}
+
 export interface ComputeStatus {
   spark: SparkStatus | null
   trino: TrinoComputeStatus | null
   jupyter: JupyterStatus | null
+  spark_applications: SparkApplication[]
+  trino_queries: TrinoQuery[]
+  jupyter_kernels: JupyterKernel[]
 }
 
 export interface ColumnInfo {
@@ -417,6 +639,31 @@ export interface TablePreview {
   columns: string[]
   rows: unknown[][]
   row_count: number
+}
+
+export interface ERColumn {
+  name: string
+  type: string
+  is_primary_key_guess: boolean
+}
+
+export interface ERTable {
+  name: string
+  columns: ERColumn[]
+}
+
+export interface ERRelationship {
+  from_table: string
+  from_column: string
+  to_table: string
+  to_column: string
+}
+
+export interface ERDiagram {
+  catalog: string
+  schema_name: string
+  tables: ERTable[]
+  relationships: ERRelationship[]
 }
 
 export interface MLExperiment {
@@ -509,15 +756,16 @@ export interface MonitoringStatus {
   prometheus_url: string
 }
 
-export interface ScheduleInfo {
+export interface PipelineSummary {
+  pipeline_id: string
   name: string
-  cron_schedule: string
-  status: string
 }
 
-export interface JobInfo {
-  repository: string
+export interface ScheduledPipelineInfo {
+  pipeline_id: string
   name: string
+  schedule: string
+  next_run_at: string | null
 }
 
 export interface RunInfo {
@@ -526,14 +774,21 @@ export interface RunInfo {
   status: string
   start_time: number | null
   end_time: number | null
+  pipeline_id: string | null
+  pipeline_name: string | null
+  local_run_id: string | null
 }
 
 export interface JobsStatus {
   available: boolean
-  jobs: JobInfo[]
-  schedules: ScheduleInfo[]
+  scheduled_pipelines: ScheduledPipelineInfo[]
+  unscheduled_pipelines: PipelineSummary[]
   recent_runs: RunInfo[]
   dagster_url: string
+}
+
+export interface TriggerRunResponse {
+  dagster_run_id: string
 }
 
 export interface AuditLogEntry {

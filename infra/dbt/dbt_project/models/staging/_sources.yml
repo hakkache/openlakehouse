@@ -10,3 +10,8 @@ sources:
         description: Postgres cdc.customers table replicated via Debezium CDC (Phase 12).
       - name: orders_cdc
         description: Postgres cdc.orders table replicated via Debezium CDC (Phase 12).
+      - name: olist_orders
+      - name: olist_customers
+      - name: olist_order_items
+      - name: olist_order_payments
+      - name: olist_order_reviews

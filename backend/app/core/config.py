@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.2:1b"
 
     spark_master_url: str = "http://spark-master:8080"
+    spark_master_spark_url: str = "spark://spark-master:7077"
+    spark_thrift_host: str = "spark-thriftserver"
+    spark_thrift_port: int = 10000
+    spark_code_driver_host: str = "backend"
+    spark_code_cores_max: str = "4"
+    spark_code_idle_timeout_seconds: int = 900
     jupyter_url: str = "http://jupyter:8888"
     jupyter_token: str = "openlakehouse"
 
@@ -54,6 +60,8 @@ class Settings(BaseSettings):
     gitea_url: str = "http://gitea:3000"
     gitea_admin_user: str = "olh-admin"
     gitea_admin_password: str = "openlakehouse_dev_password"
+
+    dbt_runner_url: str = "http://dbt:8580"
 
     superset_url: str = "http://superset:8088"
     superset_admin_user: str = "admin"

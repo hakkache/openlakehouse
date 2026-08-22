@@ -153,8 +153,11 @@ services:
       KEYCLOAK_ADMIN_USER: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_password}
       CONNECTION_ENCRYPTION_KEY: ${CONNECTION_ENCRYPTION_KEY:-}
+      SPARK_CONF_DIR: /opt/spark-conf
     ports:
       - "8000:8000"
+    volumes:
+      - ./infra/spark/spark-defaults.conf:/opt/spark-conf/spark-defaults.conf:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -383,6 +386,41 @@ services:
       timeout: 5s
       retries: 10
       start_period: 15s
+
+  spark-thriftserver:
+    image: apache/spark:3.5.9-scala2.12-java17-python3-ubuntu
+    container_name: openlakehouse-spark-thriftserver
+    <<: *core-profiles
+    user: root
+    command: >
+      /opt/spark/bin/spark-submit
+      --class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2
+      --master spark://spark-master:7077
+      --conf spark.driver.host=spark-thriftserver
+      --conf spark.cores.max=8
+      --hiveconf hive.server2.thrift.port=10000
+      --hiveconf hive.server2.thrift.bind.host=0.0.0.0
+      --hiveconf hive.server2.authentication=NOSASL
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      spark-worker:
+        condition: service_healthy
+    ports:
+      - "${SPARK_THRIFT_PORT:-10001}:10000"
+    volumes:
+      - ./infra/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - spark-events:/opt/spark/spark-events
+    networks:
+      - openlakehouse-net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('localhost', 10000), 3).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
 
   jupyter:
     build:
@@ -736,6 +774,12 @@ services:
     depends_on:
       trino:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8580/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     networks:
       - openlakehouse-net
 

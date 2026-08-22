@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, get_db
 from app.core.security import CurrentUser, get_current_user
+from app.core.spark_sql_client import get_spark_connection
 from app.core.trino_client import get_trino_connection
 from app.models.sql import QueryExecution, SavedQuery
 from app.schemas.sql import (
@@ -22,8 +23,9 @@ router = APIRouter(prefix="/sql", tags=["sql"])
 
 
 class _RunningQuery:
-    def __init__(self) -> None:
+    def __init__(self, engine: str = "trino") -> None:
         self.status = "RUNNING"
+        self.engine = engine
         self.trino_query_id: str | None = None
         self.columns: list[str] | None = None
         self.rows: list[list] | None = None
@@ -45,6 +47,7 @@ def _persist_execution(query_id: str, sql_text: str, user: str, handle: "_Runnin
                 id=uuid.UUID(query_id),
                 trino_query_id=handle.trino_query_id,
                 sql_text=sql_text,
+                engine=handle.engine,
                 status=handle.status,
                 row_count=handle.row_count,
                 duration_ms=handle.duration_ms,
@@ -57,15 +60,15 @@ def _persist_execution(query_id: str, sql_text: str, user: str, handle: "_Runnin
         db.close()
 
 
-def _execute_in_background(query_id: str, sql_text: str, user: str) -> None:
+def _execute_in_background(query_id: str, sql_text: str, user: str, engine: str) -> None:
     handle = _REGISTRY[query_id]
     started = time.monotonic()
     try:
-        conn = get_trino_connection(user=user)
+        conn = get_spark_connection(user=user) if engine == "spark" else get_trino_connection(user=user)
         cursor = conn.cursor()
         handle.cursor = cursor
         cursor.execute(sql_text)
-        handle.trino_query_id = cursor.query_id
+        handle.trino_query_id = getattr(cursor, "query_id", None)
         rows = cursor.fetchall()
         handle.columns = [desc[0] for desc in cursor.description] if cursor.description else []
         handle.rows = [list(r) for r in rows]
@@ -85,11 +88,13 @@ def _execute_in_background(query_id: str, sql_text: str, user: str) -> None:
 def submit_query(payload: QueryRequest, user: CurrentUser = Depends(get_current_user)) -> QueryStatus:
     query_id = str(uuid.uuid4())
     with _REGISTRY_LOCK:
-        _REGISTRY[query_id] = _RunningQuery()
+        _REGISTRY[query_id] = _RunningQuery(engine=payload.engine)
     username = user.username or user.subject
-    thread = threading.Thread(target=_execute_in_background, args=(query_id, payload.sql, username), daemon=True)
+    thread = threading.Thread(
+        target=_execute_in_background, args=(query_id, payload.sql, username, payload.engine), daemon=True
+    )
     thread.start()
-    return QueryStatus(id=uuid.UUID(query_id), status="RUNNING")
+    return QueryStatus(id=uuid.UUID(query_id), status="RUNNING", engine=payload.engine)
 
 
 @router.get("/queries/{query_id}", response_model=QueryStatus)
@@ -100,6 +105,7 @@ def get_query_status(query_id: uuid.UUID, user: CurrentUser = Depends(get_curren
     return QueryStatus(
         id=query_id,
         status=handle.status,
+        engine=handle.engine,
         columns=handle.columns,
         rows=handle.rows,
         row_count=handle.row_count,

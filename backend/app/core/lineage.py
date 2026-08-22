@@ -27,6 +27,9 @@ class LineageEdge:
     target_fqn: str
     pipeline_id: str
     pipeline_name: str
+    # Internal node id of the destination node that wrote target_fqn, so callers can
+    # join PipelineNodeRun history to find the latest write status for this edge.
+    dest_node_id: str
 
 
 def _node_fqn(node: PipelineNode) -> str | None:
@@ -88,6 +91,7 @@ def extract_pipeline_lineage(pipeline_id: str, pipeline_name: str, defn: Pipelin
                         target_fqn=target_fqn,
                         pipeline_id=pipeline_id,
                         pipeline_name=pipeline_name,
+                        dest_node_id=node.id,
                     )
                 )
     return edges

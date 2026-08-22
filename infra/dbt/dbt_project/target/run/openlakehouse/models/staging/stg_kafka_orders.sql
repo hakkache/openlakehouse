@@ -2,7 +2,7 @@
   
     
 
-    create table "iceberg"."dbt_staging"."stg_kafka_orders__dbt_tmp"
+    create table "iceberg"."dbt_staging"."stg_kafka_orders"
       
       
     as (
