@@ -607,6 +607,7 @@ Everything is in named Docker volumes on your machine (`postgres-data`, `minio-d
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — system & network architecture, data flow, DB model
+- [Live topology guide](https://hakkache.github.io/openlakehouse/OpenLakehouse-Topology/) — hosted walkthrough on GitHub Pages
 
 ## License
 
