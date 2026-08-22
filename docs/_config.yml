@@ -1,0 +1,6 @@
+title: OpenLakehouse
+description: Self-hosted, open-source data lakehouse platform
+
+exclude:
+  - olist-e2e-guide/06-pipeline-builder-deep-dive/ 
+  - olist-e2e-guide/07-dbt-modeling/
