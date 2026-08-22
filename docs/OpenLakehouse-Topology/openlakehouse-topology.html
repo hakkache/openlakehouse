@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenLakehouse — Platform Topology</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#060911;--bg2:#0A0F1C;--sf:#0F1626;--sf2:#151F33;
+  --ln:#1B2740;--ln2:#293856;
+  --ink:#DEE7F7;--ink2:#8B9CBC;--ink3:#586A8A;
+  --data:#F0A93B;--control:#A98BF5;--meta:#4FD6D2;--live:#F0A93B;
+  --fd:"IBM Plex Sans Condensed","Helvetica Neue",Arial,sans-serif;
+  --fb:"IBM Plex Sans",system-ui,sans-serif;
+  --fm:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--fb);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;background-image:linear-gradient(rgba(41,56,86,.13) 1px,transparent 1px),linear-gradient(90deg,rgba(41,56,86,.13) 1px,transparent 1px);background-size:54px 54px;mask-image:radial-gradient(ellipse 76% 56% at 50% 24%,#000 16%,transparent 74%);pointer-events:none;z-index:0}
+.shell{position:relative;z-index:1;max-width:1840px;margin:0 auto;padding:0 24px 64px}
+
+.mast{padding:50px 0 24px;border-bottom:1px solid var(--ln);display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:46px;align-items:end}
+.eyebrow{font-family:var(--fm);font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink3);display:flex;align-items:center;gap:9px;margin-bottom:14px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--live);animation:bc 2.8s ease-out infinite}
+@keyframes bc{0%{box-shadow:0 0 0 0 rgba(240,169,59,.55)}70%{box-shadow:0 0 0 9px rgba(240,169,59,0)}100%{box-shadow:0 0 0 0 rgba(240,169,59,0)}}
+h1{font-family:var(--fd);font-weight:700;font-size:clamp(36px,5.4vw,66px);line-height:.94;letter-spacing:-.025em}
+h1 .th{font-weight:500;color:var(--ink2);display:block}
+.lede{color:var(--ink2);line-height:1.62;max-width:52ch}
+.lede strong{color:var(--ink);font-weight:500}
+.stats{display:flex;margin-top:18px;border:1px solid var(--ln);border-radius:3px;overflow:hidden;font-family:var(--fm)}
+.stats div{padding:10px 16px;border-right:1px solid var(--ln);background:var(--bg2);flex:1}
+.stats div:last-child{border-right:0}
+.stats b{display:block;font-size:18px;font-weight:600;letter-spacing:-.02em}
+.stats span{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--ink3)}
+.stats .z b{color:var(--live)}
+
+.ctl{position:sticky;top:0;z-index:60;background:linear-gradient(var(--bg) 70%,rgba(6,9,17,.9));backdrop-filter:blur(9px);border-bottom:1px solid var(--ln)}
+.row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:11px 0}
+.row+.row{border-top:1px solid var(--ln)}
+.lb{font-family:var(--fm);font-size:9px;letter-spacing:.19em;text-transform:uppercase;color:var(--ink3);flex:none;margin-right:3px}
+.b{font-family:var(--fm);font-size:11px;letter-spacing:.06em;color:var(--ink2);background:var(--sf);border:1px solid var(--ln);border-radius:3px;padding:6px 11px;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:6px}
+.b:hover{color:var(--ink);border-color:var(--ln2)}
+.b:focus-visible{outline:2px solid var(--live);outline-offset:2px}
+.b[aria-pressed="true"]{background:var(--sf2);border-color:var(--live);color:var(--live)}
+.b.solid{background:var(--live);border-color:var(--live);color:#140C01;font-weight:600}
+.b.solid:hover{background:#FFC162;border-color:#FFC162;color:#140C01}
+.b .ct{font-size:9px;opacity:.55}
+.b.off{opacity:.38}
+.sw{width:15px;height:2px;border-radius:2px;display:inline-block}
+.sw.d{background-image:linear-gradient(90deg,currentColor 55%,transparent 55%);background-size:5px 2px}
+.gr{flex:1}
+.cmd{font-family:var(--fm);font-size:11px;color:var(--ink3);background:var(--bg2);border:1px solid var(--ln);border-radius:3px;padding:6px 11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmd b{color:var(--live);font-weight:500}
+
+.search{position:relative;flex:none}
+.search input{font-family:var(--fm);font-size:11px;color:var(--ink);background:var(--sf);border:1px solid var(--ln);border-radius:3px;padding:6px 11px 6px 26px;width:190px;outline:none;transition:.15s}
+.search input:focus{border-color:var(--live);width:240px}
+.search input::placeholder{color:var(--ink3)}
+.search .ic{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--ink3);font-size:11px;font-family:var(--fm);pointer-events:none}
+.sug{position:absolute;top:calc(100% + 5px);left:0;width:260px;background:var(--bg2);border:1px solid var(--ln2);border-radius:4px;overflow:hidden;z-index:70;display:none;box-shadow:0 12px 34px rgba(0,0,0,.6)}
+.sug.on{display:block}
+.sug button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--ln);padding:8px 11px;cursor:pointer;color:var(--ink2);font:inherit;font-size:12.5px}
+.sug button:last-child{border-bottom:0}
+.sug button:hover,.sug button.sel{background:var(--sf2);color:var(--ink)}
+.sug .k{font-family:var(--fm);font-size:10px;color:var(--ink3);width:22px;text-align:center;border:1px solid var(--ln2);border-radius:2px;padding:1px 0;flex:none}
+.sug .pt{margin-left:auto;font-family:var(--fm);font-size:10px;color:var(--ink3)}
+
+.grid{display:grid;grid-template-columns:212px minmax(0,1fr) 274px;gap:20px;padding-top:22px;align-items:start}
+.rail h2,.insp h2{font-family:var(--fm);font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid var(--ln)}
+.tier{display:grid;grid-template-columns:22px 1fr;gap:9px;width:100%;text-align:left;padding:9px 10px 9px 6px;background:none;border:1px solid transparent;border-radius:4px;cursor:pointer;color:inherit;font:inherit;transition:.15s}
+.tier:hover{background:var(--sf)}
+.tier:focus-visible{outline:2px solid var(--live);outline-offset:1px}
+.tier .n{font-family:var(--fm);font-size:10px;color:var(--ink3);padding-top:2px}
+.tier .t{font-family:var(--fd);font-weight:600;font-size:12.5px;letter-spacing:.045em;text-transform:uppercase;color:var(--ink2)}
+.tier .d{font-size:10.5px;line-height:1.4;color:var(--ink3)}
+.tier[aria-pressed="true"]{background:var(--sf2);border-color:var(--ln2)}
+.tier[aria-pressed="true"] .t,.tier[aria-pressed="true"] .n{color:var(--live)}
+
+.wrap{position:relative;border:1px solid var(--ln);border-radius:5px;background:radial-gradient(ellipse 66% 44% at 50% 56%,rgba(28,42,72,.5),transparent 72%),var(--bg2);padding:15px;overflow:hidden}
+.scaler{transform-origin:top left}
+.stage{position:relative;width:1180px;height:900px}
+#wires{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+
+.node{position:absolute;background:var(--sf);border:1px solid var(--ln2);border-radius:4px;padding:8px 10px;display:flex;align-items:center;gap:9px;cursor:pointer;transition:opacity .28s,border-color .16s,background .16s,transform .16s}
+.node .c{font-family:var(--fm);font-size:10.5px;font-weight:600;color:var(--ink3);width:24px;flex:none;padding:2px 0;text-align:center;border:1px solid var(--ln2);border-radius:3px;background:var(--bg);transition:.16s}
+.node .x{min-width:0;flex:1}
+.node .l{font-family:var(--fd);font-weight:600;font-size:12.5px;letter-spacing:.035em;text-transform:uppercase;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .r{font-size:10px;color:var(--ink3);line-height:1.26;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .p{font-family:var(--fm);font-size:9.5px;color:var(--ink3);flex:none;padding-left:5px}
+.node:hover{border-color:var(--live);background:var(--sf2);transform:translateY(-1px)}
+.node:hover .c{color:var(--live);border-color:var(--live)}
+.node:focus-visible{outline:2px solid var(--live);outline-offset:2px}
+.node.wide{padding:12px 16px}
+.node.wide .l{font-size:15px;letter-spacing:.05em}
+.node.wide .c{width:30px;font-size:12px}
+.node.seam{border-color:#3D5079;background:linear-gradient(180deg,var(--sf2),var(--sf))}
+.node.dim{opacity:.12}
+.node.on{border-color:var(--live);background:var(--sf2)}
+.node.on .c{color:var(--live);border-color:var(--live)}
+.node.sel{border-color:var(--live);background:var(--sf2);box-shadow:0 0 0 1px var(--live)}
+.node.hit{animation:ht .9s ease-out}
+@keyframes ht{0%{box-shadow:0 0 0 0 rgba(240,169,59,.5)}100%{box-shadow:0 0 0 14px rgba(240,169,59,0)}}
+.node.pathpick{border-color:var(--meta);box-shadow:0 0 0 1px var(--meta)}
+.node .hop{position:absolute;top:-7px;right:-7px;width:17px;height:17px;border-radius:50%;background:var(--live);color:#140C01;font-family:var(--fm);font-size:9.5px;font-weight:600;display:none;align-items:center;justify-content:center}
+.node.numbered .hop{display:flex}
+
+.w{fill:none;stroke-width:1.15;transition:opacity .28s,stroke-width .16s}
+.w.data{stroke:var(--data);opacity:.3}
+.w.control{stroke:var(--control);opacity:.21;stroke-dasharray:4 4}
+.w.meta{stroke:var(--meta);opacity:.21;stroke-dasharray:2 5}
+.w.dim{opacity:.03}
+.w.on{opacity:.95;stroke-width:1.9}
+.w.hide{opacity:0!important}
+.tr{fill:none;stroke:var(--live);stroke-width:2.3;opacity:0;transition:opacity .3s}
+.tr.on{opacity:.92}
+.pathw{fill:none;stroke:var(--meta);stroke-width:2.4;opacity:0;transition:opacity .3s;stroke-linecap:round}
+.pathw.on{opacity:.95}
+
+.frame{position:absolute;border:1px dashed var(--ln2);border-radius:5px;pointer-events:none;opacity:.46;transition:.28s}
+.frame.dim{opacity:.06}
+.frame.on{opacity:1;border-color:var(--live)}
+.frame span{position:absolute;top:-8px;left:12px;background:var(--bg2);padding:0 7px;font-family:var(--fm);font-size:8.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink3)}
+.frame.on span{color:var(--live)}
+
+.readout{position:absolute;left:15px;right:15px;bottom:15px;display:flex;align-items:center;gap:12px;font-family:var(--fm);font-size:11px;color:var(--ink2);background:rgba(6,9,17,.94);border:1px solid var(--ln2);border-radius:4px;padding:9px 13px;opacity:0;transform:translateY(6px);transition:.26s;pointer-events:none;z-index:5}
+.readout.on{opacity:1;transform:none}
+.readout .s{color:var(--live);font-weight:600;flex:none;font-variant-numeric:tabular-nums}
+.readout .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.readout .bar{width:100px;height:2px;background:var(--ln2);border-radius:2px;overflow:hidden;flex:none}
+.readout .bar i{display:block;height:100%;width:0;background:var(--live);transition:width .34s linear}
+
+/* inspector */
+.insp{position:sticky;top:112px}
+.card{border:1px solid var(--ln);border-radius:4px;background:var(--bg2);overflow:hidden}
+.empty{padding:18px 16px;font-size:12.5px;color:var(--ink3);line-height:1.6}
+.empty kbd{font-family:var(--fm);font-size:10.5px;background:var(--sf);border:1px solid var(--ln2);border-radius:2px;padding:1px 5px;color:var(--ink2)}
+.ihead{padding:14px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px}
+.ihead .c{font-family:var(--fm);font-size:12px;font-weight:600;color:var(--live);width:28px;flex:none;padding:3px 0;text-align:center;border:1px solid var(--live);border-radius:3px;background:var(--bg)}
+.ihead .l{font-family:var(--fd);font-weight:600;font-size:16px;letter-spacing:.03em;text-transform:uppercase;line-height:1.1}
+.ihead .r{font-size:11px;color:var(--ink3)}
+.isec{padding:12px 16px;border-bottom:1px solid var(--ln)}
+.isec:last-child{border-bottom:0}
+.isec h3{font-family:var(--fm);font-size:8.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px;font-weight:500}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:2px 0}
+.kv span{color:var(--ink3)}
+.kv b{font-family:var(--fm);font-size:11px;font-weight:500;color:var(--ink2)}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-family:var(--fm);font-size:9.5px;letter-spacing:.05em;color:var(--meta);border:1px solid rgba(79,214,210,.35);background:rgba(79,214,210,.07);border-radius:2px;padding:2px 6px}
+.nbr{display:flex;align-items:center;gap:7px;width:100%;text-align:left;background:none;border:0;padding:4px 0;cursor:pointer;color:var(--ink2);font:inherit;font-size:12px;border-radius:2px}
+.nbr:hover{color:var(--live)}
+.nbr .k{font-family:var(--fm);font-size:9.5px;color:var(--ink3);width:22px;text-align:center;border:1px solid var(--ln2);border-radius:2px;padding:1px 0;flex:none}
+.nbr .ar{font-family:var(--fm);font-size:10px;color:var(--ink3);flex:none}
+.hops{display:flex;gap:4px}
+.hops button{flex:1;font-family:var(--fm);font-size:10.5px;background:var(--sf);border:1px solid var(--ln);border-radius:3px;padding:5px 0;cursor:pointer;color:var(--ink2);transition:.15s}
+.hops button:hover{border-color:var(--ln2);color:var(--ink)}
+.hops button[aria-pressed="true"]{border-color:var(--live);color:var(--live);background:var(--sf2)}
+.iact{padding:12px 16px;display:flex;flex-direction:column;gap:6px}
+.iact .b{justify-content:center;width:100%}
+.pathres{font-family:var(--fm);font-size:11px;color:var(--ink2);line-height:1.7}
+.pathres .hopn{color:var(--meta);font-weight:500}
+
+.notes{margin-top:38px;display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:1px;background:var(--ln);border:1px solid var(--ln);border-radius:4px;overflow:hidden}
+.note{background:var(--bg2);padding:20px 22px}
+.note h4{font-family:var(--fd);font-size:13px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px;font-weight:600}
+.note p{font-size:12.5px;color:var(--ink2);line-height:1.6}
+.note code{font-family:var(--fm);font-size:11px;color:var(--live);background:rgba(240,169,59,.08);padding:1px 5px;border-radius:2px}
+.note.warn h4{color:var(--live)}
+footer{margin-top:28px;font-family:var(--fm);font-size:10.5px;color:var(--ink3);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+footer a{color:var(--ink2);text-decoration:none;border-bottom:1px solid var(--ln2)}
+footer a:hover{color:var(--live);border-color:var(--live)}
+
+
+.node.dead{border-color:#E4574C!important;background:rgba(228,87,76,.12)!important;opacity:1!important}
+.node.dead .c{color:#E4574C!important;border-color:#E4574C!important}
+.node.dead .l{color:#FF8078}
+.node.broken{border-color:rgba(228,87,76,.4);background:rgba(228,87,76,.05);opacity:.85!important}
+.node.broken .l{color:#C98A85}
+.node.broken .c{color:#A8635E}
+.node.booting{border-color:var(--live);background:var(--sf2)}
+.node.booting .c{color:var(--live);border-color:var(--live)}
+.readout.boot{bottom:15px}
+.readout.boot .t{color:var(--live)}
+.dead-sec{background:rgba(228,87,76,.06)}
+.dead-sec h3{color:#E4574C!important}
+.bigno{font-family:var(--fd);font-size:34px;font-weight:700;line-height:1;color:#E4574C;margin-bottom:6px}
+#killBtn{border-color:rgba(228,87,76,.5);color:#E4574C}
+#killBtn:hover{border-color:#E4574C;background:rgba(228,87,76,.1)}
+
+@media (max-width:1420px){.grid{grid-template-columns:200px minmax(0,1fr)}
+ .insp{position:fixed;right:16px;bottom:16px;width:300px;z-index:80;max-height:72vh;overflow:auto;display:none}
+ .insp.open{display:block}
+ .insp .card{box-shadow:0 18px 50px rgba(0,0,0,.7)}}
+@media (max-width:1080px){.mast{grid-template-columns:1fr;gap:24px}
+ .grid{grid-template-columns:1fr}
+ .rail{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:3px}
+ .rail h2{grid-column:1/-1}.tier .d{display:none}}
+@media (max-width:720px){.shell{padding:0 13px 52px}.mast{padding:32px 0 18px}.cmd,.search{display:none}
+ .insp{left:13px;right:13px;width:auto}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header class="mast">
+  <div>
+    <div class="eyebrow"><span class="dot"></span>Self-hosted · 39 containers · one bridge network</div>
+    <h1>OpenLakehouse<span class="th">Platform Topology</span></h1>
+  </div>
+  <div>
+    <p class="lede">A working Databricks-style lakehouse on hardware you own. <strong>Every arrow is a real connection between running containers.</strong> Click a service to inspect it, find the path between any two, or watch a change travel from Postgres to a dashboard.</p>
+    <div class="stats">
+      <div class="z"><b>$0</b><span>Cloud spend</span></div>
+      <div><b>39</b><span>Services</span></div>
+      <div><b>9</b><span>Profiles</span></div>
+      <div><b>3</b><span>Medallion layers</span></div>
+    </div>
+  </div>
+</header>
+
+<nav class="ctl" aria-label="Diagram controls">
+  <div class="row">
+    <span class="lb">Profile</span>
+    <span id="profileBtns" style="display:contents"></span>
+    <span class="gr"></span>
+    <span class="cmd" id="cmdText">docker compose --profile <b>full</b> up -d</span>
+  </div>
+  <div class="row">
+    <span class="lb">Trace</span>
+    <span id="traceBtns" style="display:contents"></span>
+    <button class="b" id="bootBtn">▸ Startup order</button>
+    <button class="b" id="reset">Reset</button>
+    <span class="gr"></span>
+    <div class="search">
+      <span class="ic">/</span>
+      <input id="q" type="text" placeholder="Find a service" autocomplete="off" aria-label="Find a service">
+      <div class="sug" id="sug" role="listbox"></div>
+    </div>
+    <button class="b" id="fd" aria-pressed="true" style="color:var(--data)"><i class="sw" style="background:var(--data)"></i>Data</button>
+    <button class="b" id="fc" aria-pressed="true" style="color:var(--control)"><i class="sw d"></i>Control</button>
+    <button class="b" id="fm" aria-pressed="true" style="color:var(--meta)"><i class="sw d"></i>Metadata</button>
+  </div>
+</nav>
+
+<div class="grid">
+  <aside class="rail"><h2>Tiers</h2><div id="rail"></div></aside>
+
+  <section class="wrap" id="stageWrap">
+    <div class="scaler" id="scaler">
+      <div class="stage" id="stage"><svg id="wires" viewBox="0 0 1180 900" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+    </div>
+    <div class="readout boot" id="bootBar" role="status" aria-live="polite"></div>
+    <div class="readout" id="readout" role="status" aria-live="polite">
+      <span class="s" id="rStep">01/08</span>
+      <span class="t" id="rText"></span>
+      <span class="bar"><i id="rBar"></i></span>
+    </div>
+  </section>
+
+  <aside class="insp" id="insp">
+    <h2>Inspector</h2>
+    <div class="card" id="ipanel">
+      <div class="empty">Click any service to see its ports, profiles and connections.<br><br>Press <kbd>/</kbd> to search, <kbd>Esc</kbd> to clear.</div>
+    </div>
+  </aside>
+</div>
+
+<section class="notes">
+  <div class="note">
+    <h4>Polaris is the seam</h4>
+    <p>Spark writes and Trino reads the same tables because both resolve them through one Apache Polaris REST catalog. Take it out and you have two engines writing into the same bucket, blind to each other.</p>
+  </div>
+  <div class="note">
+    <h4>Storage is not the database</h4>
+    <p>MinIO holds Parquet on your disk. Iceberg is the metadata that makes those files behave like tables — ACID commits, schema evolution, time travel — across bronze, silver and gold.</p>
+  </div>
+  <div class="note">
+    <h4>Two ways in</h4>
+    <p>Debezium captures Postgres row changes into Kafka as they happen. Dagster runs scheduled Spark and dbt jobs. Both land in the same tables, so nothing downstream cares which arrived first.</p>
+  </div>
+  <div class="note warn">
+    <h4>Bring the profile flag back</h4>
+    <p><code>docker compose down</code> must use the same <code>--profile</code> you started with, or Compose silently leaves profile-gated containers running.</p>
+  </div>
+</section>
+
+<footer>
+  <span>Principal services shown · exporters, workers and admin UIs collapsed for legibility</span>
+  <span><a href="https://github.com/hakkache/openlakehouse">github.com/hakkache/openlakehouse</a></span>
+</footer>
+</div>
+<script>
+/* ------------------------------------------------------------------ data */
+const TIERS=[
+ {id:'client', n:'01',t:'Client',       d:'One door, port 80'},
+ {id:'gateway',n:'02',t:'Gateway',      d:'Traefik path routing'},
+ {id:'app',    n:'03',t:'Application',  d:'React UI and FastAPI'},
+ {id:'ctl',    n:'04',t:'Control plane',d:'State, identity, secrets'},
+ {id:'orch',   n:'05',t:'Orchestration',d:'Schedules, notebooks, git'},
+ {id:'cmp',    n:'06',t:'Compute',      d:'Batch, transform, CDC'},
+ {id:'cat',    n:'07',t:'Catalog',      d:'Iceberg REST catalog'},
+ {id:'store',  n:'08',t:'Storage',      d:'Tables over object storage'},
+ {id:'q',      n:'09',t:'Consumption',  d:'SQL, BI, ML, lineage'},
+ {id:'obs',    n:'10',t:'Observability',d:'Metrics, logs, traces'},
+];
+const PROFILES=[
+  {id:'core',      nm:'core',             ds:'Gateway, app, state'},
+  {id:'security',  nm:'security',         ds:'SSO and secrets'},
+  {id:'lakehouse', nm:'lakehouse',        ds:'Spark, Polaris, Trino'},
+  {id:'dataeng',   nm:'data-engineering', ds:'Dagster, dbt, catalog'},
+  {id:'streaming', nm:'streaming',        ds:'Kafka and CDC'},
+  {id:'ml',        nm:'ml',               ds:'MLflow tracking'},
+  {id:'governance',nm:'governance',       ds:'Catalog and quality'},
+  {id:'monitoring',nm:'monitoring',       ds:'Metrics, logs, traces'},
+  {id:'full',      nm:'full',             ds:'Everything above'},
+];
+const DEPS={core:[],security:['core'],lakehouse:['core'],
+  dataeng:['lakehouse','core'],streaming:['lakehouse','core'],
+  ml:['lakehouse','core'],governance:['lakehouse','core'],
+  monitoring:[],full:['core','security','lakehouse','dataeng','streaming','ml','governance','monitoring']};
+
+const N=[
+ {id:'browser', c:'UI',l:'Browser',      r:'Your machine',                L:'client', pf:['core'],       x:472,y:16, w:236,h:46},
+ {id:'traefik', c:'TF',l:'Traefik',      r:'Only published entrypoint', p:':80', L:'gateway',pf:['core'], x:472,y:88, w:236,h:46},
+ {id:'frontend',c:'FE',l:'React',        r:'Vite · TS · Tailwind',   p:'5173',L:'app',pf:['core'],  x:212,y:160,w:262,h:46},
+ {id:'backend', c:'BE',l:'FastAPI',      r:'/api/v1/*',              p:'8000',L:'app',pf:['core'],  x:706,y:160,w:262,h:46},
+ {id:'postgres',c:'PG',l:'PostgreSQL',   r:'Control plane',p:'5432',L:'ctl',pf:['core'],     x:58, y:242,w:200,h:46},
+ {id:'redis',   c:'RD',l:'Redis',        r:'Cache · queue',p:'6379',L:'ctl',pf:['core'],     x:274,y:242,w:200,h:46},
+ {id:'keycloak',c:'KC',l:'Keycloak',     r:'OIDC · JWT · RBAC',p:'8081',L:'ctl',pf:['security'],x:490,y:242,w:200,h:46},
+ {id:'openbao', c:'OB',l:'OpenBao',      r:'Secrets',      p:'8200',L:'ctl',pf:['security'], x:706,y:242,w:200,h:46},
+ {id:'ollama',  c:'AI',l:'Ollama',       r:'In-app assistant',p:'11434',L:'ctl',pf:['full'], x:922,y:242,w:200,h:46},
+ {id:'dagster', c:'DG',l:'Dagster',      r:'Schedules · sensors',p:'3001',L:'orch',pf:['dataeng'],x:58, y:324,w:338,h:46},
+ {id:'gitea',   c:'GT',l:'Gitea',        r:'Versions pipelines · dbt',p:'3010',L:'orch',pf:['full'],x:420,y:324,w:338,h:46},
+ {id:'jupyter', c:'JP',l:'Jupyter',      r:'PySpark notebooks',p:'8888',L:'orch',pf:['full'],x:782,y:324,w:340,h:46},
+ {id:'spark',   c:'SP',l:'Spark',        r:'Master · worker · history',p:'8090',L:'cmp',pf:['lakehouse'],x:58, y:406,w:200,h:46},
+ {id:'dbt',     c:'DT',l:'dbt-core',     r:'Staging → marts',       L:'cmp',pf:['dataeng'],  x:274,y:406,w:200,h:46},
+ {id:'gx',      c:'GX',l:'Great Exp.',   r:'Quality gates',         L:'cmp',pf:['governance'],x:490,y:406,w:200,h:46},
+ {id:'kafka',   c:'KF',l:'Kafka',        r:'KRaft mode',   p:'9094',L:'cmp',pf:['streaming'],x:706,y:406,w:200,h:46},
+ {id:'debezium',c:'DZ',l:'Debezium',     r:'Postgres CDC', p:'8083',L:'cmp',pf:['streaming'],x:922,y:406,w:200,h:46},
+ {id:'polaris', c:'PL',l:'Apache Polaris',r:'Iceberg REST catalog — every engine agrees here',p:'8181',L:'cat',pf:['lakehouse'],x:290,y:494,w:600,h:52,seam:1},
+ {id:'iceberg', c:'IC',l:'Apache Iceberg',r:'ACID · schema evolution · time travel',L:'store',pf:['lakehouse'],x:58,y:576,w:1064,h:52,wide:1},
+ {id:'minio',   c:'S3',l:'MinIO',         r:'S3-compatible object storage · Parquet on your disk',p:'9000',L:'store',pf:['core'],x:58,y:646,w:1064,h:52,wide:1},
+ {id:'trino',   c:'TR',l:'Trino',        r:'Interactive SQL',p:'8082',L:'q',pf:['lakehouse'],x:58, y:730,w:200,h:46},
+ {id:'superset',c:'SS',l:'Superset',     r:'Dashboards',    p:'8088',L:'q',pf:['full'],     x:274,y:730,w:200,h:46},
+ {id:'mlflow',  c:'ML',l:'MLflow',       r:'Experiments · registry',p:'5000',L:'q',pf:['ml'],x:490,y:730,w:200,h:46},
+ {id:'openmeta',c:'OM',l:'OpenMetadata', r:'Catalog · lineage',p:'8585',L:'q',pf:['governance'],x:706,y:730,w:200,h:46},
+ {id:'opensearch',c:'OS',l:'OpenSearch', r:'Backs the catalog',p:'9200',L:'q',pf:['governance'],x:922,y:730,w:200,h:46},
+ {id:'otel',    c:'OT',l:'OTel Collector',r:'Traces · metrics',p:'4317',L:'obs',pf:['monitoring'],x:58, y:812,w:251,h:46},
+ {id:'prom',    c:'PM',l:'Prometheus',   r:'Metrics store', p:'9090',L:'obs',pf:['monitoring'],x:329,y:812,w:251,h:46},
+ {id:'loki',    c:'LK',l:'Loki',         r:'Logs via Promtail',p:'3100',L:'obs',pf:['monitoring'],x:600,y:812,w:251,h:46},
+ {id:'grafana', c:'GF',l:'Grafana',      r:'Correlated dashboards',p:'3300',L:'obs',pf:['monitoring'],x:871,y:812,w:251,h:46},
+];
+
+const E=[
+ ['browser','traefik','data'],
+ ['traefik','frontend','data'],['traefik','backend','data'],
+ ['frontend','backend','control'],
+ ['frontend','keycloak','control'],['backend','keycloak','control'],
+ ['backend','postgres','control'],['backend','redis','control'],
+ ['backend','openbao','control'],['backend','ollama','control','s'],
+ ['backend','dagster','control'],['backend','minio','control'],
+ ['dagster','spark','data'],['dagster','dbt','data'],
+ ['gitea','dagster','meta','rs'],['gitea','dbt','meta','rs'],
+ ['jupyter','spark','data'],
+ ['debezium','postgres','meta'],['debezium','kafka','data'],
+ ['kafka','spark','data','r'],
+ ['gx','spark','control'],
+ ['spark','polaris','data'],['dbt','trino','data'],
+ ['polaris','iceberg','meta'],['iceberg','minio','data'],
+ ['trino','polaris','meta'],['openmeta','polaris','meta'],
+ ['openmeta','opensearch','meta'],
+ ['minio','trino','data','r'],['minio','mlflow','data','r'],
+ ['superset','trino','data'],
+ ['otel','prom','meta'],['prom','grafana','meta','r'],['loki','grafana','meta','r'],
+ ['prom','backend','meta'],['prom','spark','meta'],['prom','trino','meta'],
+ ['loki','backend','meta'],['backend','otel','meta','s'],
+];
+
+// JVM-based services and OpenSearch are the heaviest — straight from the README's
+// hardware note. Not invented numbers, just which containers to watch.
+const HEAVY=new Set(['spark','kafka','debezium','trino','keycloak','openmeta','opensearch','polaris']);
+
+const TRACES={
+ cdc:{label:'CDC stream',steps:[
+  ['postgres','debezium','A row changes in the control-plane database'],
+  ['debezium','kafka','Debezium reads the write-ahead log and emits an event'],
+  ['kafka','spark','Kafka buffers it; Spark Structured Streaming consumes'],
+  ['spark','polaris','Spark asks Polaris where the bronze table lives'],
+  ['polaris','iceberg','Polaris commits a new Iceberg snapshot'],
+  ['iceberg','minio','Parquet files land in MinIO'],
+  ['minio','trino','Trino reads the committed snapshot'],
+  ['trino','superset','The dashboard shows the new row'],
+ ]},
+ batch:{label:'Batch pipeline',steps:[
+  ['backend','dagster','A pipeline run is queued from the no-code builder'],
+  ['dagster','spark','Dagster submits the Spark job'],
+  ['spark','polaris','Spark resolves bronze → silver → gold through Polaris'],
+  ['polaris','iceberg','Each layer commits as an Iceberg snapshot'],
+  ['iceberg','minio','Gold tables materialise as Parquet'],
+  ['minio','trino','Trino serves the gold layer'],
+  ['trino','superset','Analysts query it from Superset'],
+ ]},
+ auth:{label:'Sign-in',steps:[
+  ['browser','traefik','Browser hits localhost — Traefik is the only door'],
+  ['traefik','frontend','Traefik routes / to the React app'],
+  ['frontend','keycloak','Silent SSO check, then PKCE code exchange'],
+  ['frontend','backend','Requests carry the JWT as a bearer token'],
+  ['backend','keycloak','Backend validates the signature against JWKS'],
+  ['backend','postgres','Role-gated response, enforced server side'],
+ ]},
+ obs:{label:'Telemetry',steps:[
+  ['backend','otel','FastAPI emits OTLP traces and metrics'],
+  ['otel','prom','The collector forwards metrics to Prometheus'],
+  ['prom','spark','Prometheus also scrapes Spark and Trino over JMX'],
+  ['backend','loki','Promtail ships container logs to Loki'],
+  ['prom','grafana','Grafana reads both stores'],
+  ['loki','grafana','One dashboard correlates a slow query with its job'],
+ ]},
+};
+
+/* ----------------------------------------------------------------- build */
+const stage=document.getElementById('stage'),svg=document.getElementById('wires');
+const NS='http://www.w3.org/2000/svg',byId=Object.fromEntries(N.map(n=>[n.id,n]));
+
+[{L:'ctl',x:44,y:224,w:1092,h:82,t:'Control plane'},
+ {L:'orch',x:44,y:306,w:1092,h:82,t:'Orchestration'},
+ {L:'cmp',x:44,y:388,w:1092,h:82,t:'Compute & streaming'},
+ {L:'store',x:44,y:558,w:1092,h:158,t:'Lakehouse storage'},
+ {L:'q',x:44,y:712,w:1092,h:82,t:'Query & consumption'},
+ {L:'obs',x:44,y:794,w:1092,h:82,t:'Observability'}].forEach(f=>{
+  const d=document.createElement('div');d.className='frame';d.dataset.tier=f.L;
+  d.style.cssText=`left:${f.x}px;top:${f.y}px;width:${f.w}px;height:${f.h}px`;
+  d.innerHTML=`<span>${f.t}</span>`;stage.appendChild(d);});
+
+N.forEach(n=>{
+ const d=document.createElement('div');
+ d.className='node'+(n.wide?' wide':'')+(n.seam?' seam':'');
+ d.dataset.id=n.id;d.dataset.tier=n.L;d.tabIndex=0;
+ d.setAttribute('role','button');
+ d.setAttribute('aria-label',`${n.l} — ${n.r}${n.p?', port '+n.p:''}`);
+ d.style.cssText=`left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px`;
+ d.innerHTML=`<span class="c">${n.c}</span><span class="x"><span class="l">${n.l}</span><span class="r">${n.r}</span></span>`
+   +(n.p?`<span class="p">${n.p}</span>`:'')+`<span class="hop"></span>`;
+ stage.appendChild(d);});
+
+function anch(a,b){
+ const ac={x:a.x+a.w/2,y:a.y+a.h/2},bc={x:b.x+b.w/2,y:b.y+b.h/2};
+ if(Math.abs(bc.y-ac.y)<38&&Math.abs(bc.x-ac.x)>38){
+  const r=bc.x>ac.x;
+  return{x1:r?a.x+a.w:a.x,y1:ac.y,x2:r?b.x:b.x+b.w,y2:bc.y,s:1};}
+ const dn=bc.y>ac.y;
+ return{x1:ac.x,y1:dn?a.y+a.h:a.y,x2:bc.x,y2:dn?b.y:b.y+b.h,s:0};}
+function pth(a,b){const k=anch(a,b);
+ if(k.s){const dx=(k.x2-k.x1)*.5;return`M${k.x1},${k.y1} C${k.x1+dx},${k.y1} ${k.x2-dx},${k.y2} ${k.x2},${k.y2}`;}
+ const dy=(k.y2-k.y1)*.52;return`M${k.x1},${k.y1} C${k.x1},${k.y1+dy} ${k.x2},${k.y2-dy} ${k.x2},${k.y2}`;}
+
+const wires=[];
+E.forEach(([f,t,ty])=>{const p=document.createElementNS(NS,'path');
+ p.setAttribute('d',pth(byId[f],byId[t]));p.setAttribute('class','w '+ty);
+ svg.appendChild(p);wires.push({el:p,f,t,ty,len:p.getTotalLength()});});
+const pathEl=document.createElementNS(NS,'path');pathEl.setAttribute('class','pathw');svg.appendChild(pathEl);
+const traceEl=document.createElementNS(NS,'path');traceEl.setAttribute('class','tr');svg.appendChild(traceEl);
+
+/* adjacency (undirected) + hard-dependency graph.
+   Edge flag: 'r' = dependency runs opposite the drawn arrow,
+              's' = soft/optional, does not cascade on failure. */
+const ADJ={},OUT={},IN={},REQ={},DEPD={};
+N.forEach(n=>{ADJ[n.id]=new Set();OUT[n.id]=[];IN[n.id]=[];REQ[n.id]=new Set();DEPD[n.id]=new Set();});
+E.forEach(([f,t,ty,fl])=>{fl=fl||'';
+ ADJ[f].add(t);ADJ[t].add(f);OUT[f].push(t);IN[t].push(f);
+ if(fl.includes('s'))return;
+ const [a,b]=fl.includes('r')?[t,f]:[f,t];
+ REQ[a].add(b);DEPD[b].add(a);});
+
+/* everything that transitively depends on x — what stops working if x dies */
+function blast(x){const out=new Set(),q=[x];
+ while(q.length){const c=q.shift();
+  for(const d of DEPD[c]) if(!out.has(d)){out.add(d);q.push(d);}}
+ return out;}
+
+/* startup order: Kahn over the hard-dependency graph */
+function bootWaves(){
+ const rem=new Set(N.map(n=>n.id)),waves=[];let guard=0;
+ while(rem.size&&guard++<40){
+  const ready=[...rem].filter(id=>[...REQ[id]].every(r=>!rem.has(r)));
+  if(!ready.length){waves.push([...rem]);break;}
+  waves.push(ready);ready.forEach(i=>rem.delete(i));}
+ return waves;}
+const WAVES=bootWaves();
+
+function within(id,depth){
+ const seen=new Map([[id,0]]),q=[id];
+ while(q.length){const cur=q.shift(),d=seen.get(cur);
+  if(d>=depth)continue;
+  for(const nb of ADJ[cur]) if(!seen.has(nb)){seen.set(nb,d+1);q.push(nb);}}
+ return seen;}
+
+function shortest(a,b){
+ const prev={},q=[a],seen=new Set([a]);
+ while(q.length){const cur=q.shift();
+  if(cur===b){const p=[b];let c=b;while(c!==a){c=prev[c];p.unshift(c);}return p;}
+  for(const nb of ADJ[cur]) if(!seen.has(nb)){seen.add(nb);prev[nb]=cur;q.push(nb);}}
+ return null;}
+
+/* --------------------------------------------------------------- packets */
+const reduced=matchMedia('(prefers-reduced-motion:reduce)').matches;
+const SP={data:.055,control:.035,meta:.03},PK=[];
+if(!reduced) wires.forEach(w=>{
+ for(let i=0;i<(w.ty==='data'?2:1);i++){
+  const c=document.createElementNS(NS,'circle');
+  c.setAttribute('r',w.ty==='data'?2.4:1.8);c.setAttribute('fill',`var(--${w.ty})`);
+  svg.appendChild(c);PK.push({el:c,w,t:Math.random(),hide:false});}});
+let last=performance.now();
+function loop(now){const dt=Math.min(now-last,50)/1000;last=now;
+ for(const p of PK){p.t+=SP[p.w.ty]*dt*(260/Math.max(p.w.len,80));if(p.t>1)p.t-=1;
+  if(p.hide)continue;const q=p.w.el.getPointAtLength(p.t*p.w.len);
+  p.el.setAttribute('cx',q.x);p.el.setAttribute('cy',q.y);}
+ requestAnimationFrame(loop);}
+if(!reduced)requestAnimationFrame(loop);
+function syncPK(){for(const p of PK){const c=p.w.el.classList;
+ const h=c.contains('hide')||c.contains('dim')||S.trace||S.path;p.hide=h;
+ p.el.style.opacity=h?0:(c.contains('on')?1:.72);}}
+
+/* ----------------------------------------------------------------- state */
+const S={profile:'full',tier:null,sel:null,depth:1,path:null,pathFrom:null,trace:null,dead:null,boot:0,types:{data:1,control:1,meta:1}};
+const nodeEls=[...stage.querySelectorAll('.node')],frameEls=[...stage.querySelectorAll('.frame')];
+
+function profileSet(p){if(p==='full')return null;
+ const set=new Set([p,...(DEPS[p]||[])]);return set;}
+function inProfile(n){const s=profileSet(S.profile);
+ if(!s)return true;return n.pf.some(x=>s.has(x))||n.pf.includes('core')&&s.has('core');}
+
+function paint(){
+ const pset=profileSet(S.profile);
+ const visible=new Set(N.filter(n=>!pset||n.pf.some(x=>pset.has(x))).map(n=>n.id));
+ let focus=null,broken=null,booted=null;
+ if(S.dead){broken=blast(S.dead);focus=new Set([S.dead,...broken]);}
+ else if(S.boot){booted=new Set(WAVES.slice(0,S.boot).flat());focus=booted;}
+ else if(S.path){focus=new Set(S.path);}
+ else if(S.sel){focus=new Set(within(S.sel,S.depth).keys());}
+ else if(S.tier){focus=new Set(N.filter(n=>n.L===S.tier).map(n=>n.id));}
+
+ nodeEls.forEach(el=>{
+  const id=el.dataset.id,vis=visible.has(id),inF=!focus||focus.has(id);
+  const ok=vis&&inF;
+  el.classList.toggle('dim',!ok);
+  el.classList.toggle('on',ok&&(!!focus||S.profile!=='full'));
+  el.classList.toggle('sel',id===S.sel);
+  el.classList.toggle('pathpick',id===S.pathFrom&&!S.path);
+  el.classList.toggle('dead',id===S.dead);
+  el.classList.toggle('broken',!!broken&&broken.has(id));
+  el.classList.toggle('booting',!!booted&&WAVES[S.boot-1]&&WAVES[S.boot-1].includes(id));
+  el.classList.remove('numbered');
+  if(S.path){const i=S.path.indexOf(id);
+   if(i>=0){el.classList.add('numbered');el.querySelector('.hop').textContent=i+1;}}});
+
+ frameEls.forEach(f=>{
+  const any=N.some(n=>n.L===f.dataset.tier&&visible.has(n.id)&&(!focus||focus.has(n.id)));
+  f.classList.toggle('dim',!any);
+  f.classList.toggle('on',f.dataset.tier===S.tier);});
+
+ wires.forEach(w=>{
+  let ok=visible.has(w.f)&&visible.has(w.t)&&(!focus||(focus.has(w.f)&&focus.has(w.t)));
+  if(S.path){const i=S.path.indexOf(w.f),j=S.path.indexOf(w.t);
+   ok=i>=0&&j>=0&&Math.abs(i-j)===1;}
+  w.el.classList.toggle('dim',!ok);
+  w.el.classList.toggle('on',ok&&(!!focus||S.profile!=='full'));});
+
+ wires.forEach(w=>w.el.classList.toggle('hide',!S.types[w.ty]));
+ syncPK();
+ cmdText.innerHTML=`docker compose --profile <b>${S.profile}</b> up -d`;
+ document.querySelectorAll('[data-profile]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.profile===S.profile)));
+ railEl.querySelectorAll('.tier').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.tier===S.tier)));
+ renderInspector();
+ location.hash=S.sel?`s=${S.sel}`:(S.profile!=='full'?`p=${S.profile}`:'');}
+
+/* ------------------------------------------------------------------- UI */
+const railEl=document.getElementById('rail'),cmdText=document.getElementById('cmdText');
+TIERS.forEach(L=>{const b=document.createElement('button');
+ b.className='tier';b.dataset.tier=L.id;b.setAttribute('aria-pressed','false');
+ b.innerHTML=`<span class="n">${L.n}</span><span><span class="t">${L.t}</span><span class="d">${L.d}</span></span>`;
+ b.onclick=()=>{S.tier=S.tier===L.id?null:L.id;S.sel=null;S.path=null;S.pathFrom=null;paint();};
+ railEl.appendChild(b);});
+
+const pBox=document.getElementById('profileBtns');
+PROFILES.forEach(P=>{const set=profileSet(P.id);
+ const cnt=set?N.filter(n=>n.pf.some(x=>set.has(x))).length:N.length;
+ const b=document.createElement('button');b.className='b';b.dataset.profile=P.id;
+ b.title=P.ds;b.innerHTML=`${P.nm} <span class="ct">${cnt}</span>`;
+ b.onclick=()=>{S.profile=P.id;S.tier=null;S.path=null;S.pathFrom=null;paint();};
+ pBox.appendChild(b);});
+
+const tBox=document.getElementById('traceBtns');
+Object.entries(TRACES).forEach(([k,T])=>{const b=document.createElement('button');
+ b.className='b'+(k==='cdc'?' solid':'');b.dataset.trace=k;b.dataset.label='▸ '+T.label;
+ b.textContent='▸ '+T.label;b.onclick=()=>runTrace(k,b);tBox.appendChild(b);});
+
+[['fd','data'],['fc','control'],['fm','meta']].forEach(([id,ty])=>{
+ const b=document.getElementById(id);
+ b.onclick=()=>{S.types[ty]=!S.types[ty];b.setAttribute('aria-pressed',String(!!S.types[ty]));
+  b.classList.toggle('off',!S.types[ty]);paint();};});
+
+document.getElementById('reset').onclick=()=>{
+ if(S.trace)stopTrace();
+ if(S.boot)stopBoot();
+ Object.assign(S,{profile:'full',tier:null,sel:null,depth:1,path:null,pathFrom:null,dead:null,boot:0});paint();};
+
+nodeEls.forEach(el=>{
+ const pick=()=>{const id=el.dataset.id;
+  if(S.pathFrom&&S.pathFrom!==id){S.path=shortest(S.pathFrom,id);S.sel=id;S.pathFrom=null;paint();return;}
+  S.sel=S.sel===id?null:id;S.path=null;S.pathFrom=null;S.tier=null;S.dead=null;S.boot=0;
+  document.getElementById('insp').classList.toggle('open',!!S.sel);paint();};
+ el.addEventListener('click',pick);
+ el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();pick();}});
+ el.addEventListener('mouseenter',()=>{if(S.trace||S.sel||S.path||S.dead||S.boot)return;
+  const id=el.dataset.id,near=new Set([id]);
+  wires.forEach(w=>{if(w.f===id)near.add(w.t);if(w.t===id)near.add(w.f);});
+  nodeEls.forEach(n=>{const h=near.has(n.dataset.id);
+   n.classList.toggle('on',h);n.classList.toggle('dim',!h);});
+  frameEls.forEach(f=>f.classList.add('dim'));
+  wires.forEach(w=>{const h=w.f===id||w.t===id;
+   w.el.classList.toggle('on',h);w.el.classList.toggle('dim',!h);});
+  syncPK();});
+ el.addEventListener('mouseleave',()=>{if(!S.trace&&!S.sel&&!S.path&&!S.dead&&!S.boot)paint();});});
+
+/* ------------------------------------------------------------ inspector */
+const ipanel=document.getElementById('ipanel'),inspEl=document.getElementById('insp');
+function renderInspector(){
+ if(!S.sel){ipanel.innerHTML=`<div class="empty">Click any service to see its ports, profiles and connections.<br><br>Press <kbd>/</kbd> to search, <kbd>Esc</kbd> to clear.</div>`;
+  inspEl.classList.remove('open');return;}
+ const n=byId[S.sel];
+ const pset=profileSet(S.profile);
+ const memberOf=PROFILES.filter(P=>{const s=profileSet(P.id);return !s?false:n.pf.some(x=>s.has(x));}).map(p=>p.nm);
+ const nbr=(list,arrow)=>list.length?list.map(id=>{const m=byId[id];
+   return `<button class="nbr" data-goto="${id}"><span class="k">${m.c}</span><span>${m.l}</span><span class="ar">${arrow}</span></button>`;}).join('')
+  :`<div style="font-size:11.5px;color:var(--ink3)">None</div>`;
+
+ let deadBlock='';
+ if(S.dead===S.sel){const b=blast(S.dead);
+  deadBlock=`<div class="isec dead-sec"><h3>If this stops</h3>
+   <div class="bigno">${b.size}</div>
+   <div style="font-size:11.5px;color:var(--ink2);line-height:1.55">
+     ${b.size?`service${b.size>1?'s':''} can no longer function:<br><b style="color:var(--ink)">${[...b].map(i=>byId[i].l).join(', ')}</b>`
+              :'Nothing else depends on it. Safe to stop.'}</div>
+   <div style="font-size:10.5px;color:var(--ink3);margin-top:8px">Optional links (Gitea, Ollama, telemetry) are excluded — losing them degrades a feature, not the platform.</div></div>`;}
+ let pathBlock='';
+ if(S.path&&S.path.length){
+  pathBlock=`<div class="isec"><h3>Path — ${S.path.length-1} hop${S.path.length>2?'s':''}</h3>
+   <div class="pathres">${S.path.map((id,i)=>`<span class="hopn">${i+1}</span> ${byId[id].l}`).join('<br>')}</div></div>`;}
+
+ ipanel.innerHTML=`
+  <div class="ihead"><span class="c">${n.c}</span>
+   <span><span class="l">${n.l}</span><br><span class="r">${n.r}</span></span></div>
+  <div class="isec">
+   <div class="kv"><span>Host port</span><b>${n.p||'internal only'}</b></div>
+   <div class="kv"><span>Tier</span><b>${TIERS.find(t=>t.id===n.L).t}</b></div>
+   <div class="kv"><span>Service name</span><b>${n.id}</b></div>
+   <div class="kv"><span>Starts in wave</span><b>${WAVES.findIndex(w=>w.includes(n.id))+1} of ${WAVES.length}</b></div>
+   ${HEAVY.has(n.id)?'<div class="kv"><span>Footprint</span><b style="color:var(--live)">heavy — JVM</b></div>':''}
+  </div>
+  <div class="isec"><h3>Started by profile</h3><div class="chips">${
+    (memberOf.length?memberOf:['full']).map(p=>`<span class="chip">${p}</span>`).join('')}</div></div>
+  <div class="isec"><h3>Neighbourhood</h3>
+   <div class="hops">${[1,2,3].map(d=>`<button data-depth="${d}" aria-pressed="${S.depth===d}">${d} hop${d>1?'s':''}</button>`).join('')}</div></div>
+  <div class="isec"><h3>Reaches out to</h3>${nbr(OUT[n.id],'→')}</div>
+  <div class="isec"><h3>Reached by</h3>${nbr(IN[n.id],'←')}</div>
+  ${pathBlock}${deadBlock}
+  <div class="iact">
+   <button class="b" id="pathBtn">${S.pathFrom?'Now click a target…':'Find path to…'}</button>
+   <button class="b" id="killBtn">${S.dead===n.id?'◼ Restore service':'Simulate failure'}</button>
+  </div>`;
+
+ ipanel.querySelectorAll('[data-goto]').forEach(b=>b.onclick=()=>{
+  S.sel=b.dataset.goto;S.path=null;S.pathFrom=null;paint();});
+ ipanel.querySelectorAll('[data-depth]').forEach(b=>b.onclick=()=>{
+  S.depth=+b.dataset.depth;S.path=null;paint();});
+ const pb=ipanel.querySelector('#pathBtn');
+ if(pb)pb.onclick=()=>{S.pathFrom=S.pathFrom?null:S.sel;S.path=null;S.dead=null;paint();};
+ const kb=ipanel.querySelector('#killBtn');
+ if(kb)kb.onclick=()=>{S.dead=S.dead===S.sel?null:S.sel;S.path=null;S.pathFrom=null;S.boot=0;paint();};
+ inspEl.classList.add('open');}
+
+/* --------------------------------------------------------------- search */
+const q=document.getElementById('q'),sug=document.getElementById('sug');
+let sugIdx=-1,sugList=[];
+function closeSug(){sug.classList.remove('on');sugIdx=-1;sugList=[];}
+function doSearch(){
+ const v=q.value.trim().toLowerCase();
+ if(!v){closeSug();return;}
+ sugList=N.filter(n=>n.l.toLowerCase().includes(v)||n.id.includes(v)||n.r.toLowerCase().includes(v)||(n.p||'').includes(v)).slice(0,7);
+ if(!sugList.length){sug.innerHTML=`<button disabled style="color:var(--ink3)">No match</button>`;sug.classList.add('on');return;}
+ sug.innerHTML=sugList.map((n,i)=>
+  `<button data-pick="${n.id}" class="${i===sugIdx?'sel':''}"><span class="k">${n.c}</span><span>${n.l}</span><span class="pt">${n.p||''}</span></button>`).join('');
+ sug.classList.add('on');
+ sug.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>choose(b.dataset.pick));}
+function choose(id){S.sel=id;S.path=null;S.pathFrom=null;S.tier=null;
+ q.value='';closeSug();q.blur();paint();
+ const el=stage.querySelector(`[data-id="${id}"]`);
+ if(el){el.classList.remove('hit');void el.offsetWidth;el.classList.add('hit');
+  el.scrollIntoView({block:'center',behavior:'smooth'});}}
+q.addEventListener('input',doSearch);
+q.addEventListener('keydown',e=>{
+ if(e.key==='ArrowDown'){e.preventDefault();sugIdx=Math.min(sugIdx+1,sugList.length-1);doSearch();}
+ else if(e.key==='ArrowUp'){e.preventDefault();sugIdx=Math.max(sugIdx-1,0);doSearch();}
+ else if(e.key==='Enter'){e.preventDefault();const p=sugList[sugIdx>=0?sugIdx:0];if(p)choose(p.id);}
+ else if(e.key==='Escape'){q.value='';closeSug();q.blur();}});
+document.addEventListener('click',e=>{if(!e.target.closest('.search'))closeSug();});
+
+/* ---------------------------------------------------------------- trace */
+const readout=document.getElementById('readout'),rStep=document.getElementById('rStep'),
+      rText=document.getElementById('rText'),rBar=document.getElementById('rBar');
+let tmr=null,traceBtn=null;
+function stopTrace(){clearTimeout(tmr);traceEl.classList.remove('on');readout.classList.remove('on');
+ S.trace=null;if(traceBtn){traceBtn.textContent=traceBtn.dataset.label;traceBtn=null;}paint();}
+function runTrace(key,btn){
+ if(S.trace){const same=traceBtn===btn;stopTrace();if(same)return;}
+ S.trace=key;traceBtn=btn;btn.textContent='◼ Stop';
+ Object.assign(S,{tier:null,sel:null,path:null,pathFrom:null,profile:'full'});
+ paint();
+ nodeEls.forEach(n=>{n.classList.add('dim');n.classList.remove('on');});
+ frameEls.forEach(f=>f.classList.add('dim'));
+ wires.forEach(w=>{w.el.classList.add('dim');w.el.classList.remove('on');});
+ syncPK();readout.classList.add('on');
+ const St=TRACES[key].steps;let i=0;
+ (function step(){
+  if(i>0){const pv=stage.querySelector(`[data-id="${St[i-1][0]}"]`);if(pv)pv.classList.remove('on');}
+  if(i>=St.length){tmr=setTimeout(stopTrace,1700);return;}
+  const [a,b,label]=St[i];
+  traceEl.setAttribute('d',pth(byId[a],byId[b]));
+  const L=traceEl.getTotalLength();
+  traceEl.style.transition='none';
+  traceEl.setAttribute('stroke-dasharray',L);traceEl.setAttribute('stroke-dashoffset',L);
+  traceEl.classList.add('on');void traceEl.getBoundingClientRect();
+  traceEl.style.transition='stroke-dashoffset .8s cubic-bezier(.4,0,.2,1)';
+  traceEl.setAttribute('stroke-dashoffset',0);
+  [a,b].forEach(id=>{const e=stage.querySelector(`[data-id="${id}"]`);
+   if(e){e.classList.remove('dim');e.classList.add('on');}});
+  const tg=stage.querySelector(`[data-id="${b}"]`);
+  if(tg){tg.classList.remove('hit');void tg.offsetWidth;tg.classList.add('hit');}
+  rStep.textContent=String(i+1).padStart(2,'0')+'/'+String(St.length).padStart(2,'0');
+  rText.textContent=label;rBar.style.width=Math.round(((i+1)/St.length)*100)+'%';
+  i++;tmr=setTimeout(step,reduced?650:1250);})();}
+
+
+/* ----------------------------------------------------------- boot order */
+const bootBtn=document.getElementById('bootBtn'),bootBar=document.getElementById('bootBar');
+let bootTmr=null;
+function bootLabel(){return S.boot?`◼ Stop · wave ${S.boot}/${WAVES.length}`:'▸ Startup order';}
+function stopBoot(){clearTimeout(bootTmr);S.boot=0;bootBtn.textContent=bootLabel();
+ bootBar.classList.remove('on');paint();}
+function runBoot(){
+ if(S.boot){stopBoot();return;}
+ if(S.trace)stopTrace();
+ Object.assign(S,{tier:null,sel:null,path:null,pathFrom:null,dead:null,profile:'full'});
+ inspEl.classList.remove('open');
+ bootBar.classList.add('on');
+ const tick=()=>{
+  S.boot++;
+  if(S.boot>WAVES.length){bootTmr=setTimeout(stopBoot,1900);return;}
+  bootBtn.textContent=bootLabel();
+  const names=WAVES[S.boot-1].map(i=>byId[i].l);
+  bootBar.innerHTML=`<span class="s">WAVE ${String(S.boot).padStart(2,'0')}/${String(WAVES.length).padStart(2,'0')}</span>`
+   +`<span class="t">${names.join(' · ')}</span>`
+   +`<span class="bar"><i style="width:${Math.round(S.boot/WAVES.length*100)}%"></i></span>`;
+  paint();
+  WAVES[S.boot-1].forEach(id=>{const e=stage.querySelector(`[data-id="${id}"]`);
+   if(e){e.classList.remove('hit');void e.offsetWidth;e.classList.add('hit');}});
+  bootTmr=setTimeout(tick,reduced?450:1050);};
+ tick();}
+bootBtn.onclick=runBoot;
+
+/* ----------------------------------------------------- trace step control */
+function traceStepBy(d){
+ if(!S.trace)return;
+ clearTimeout(tmr);
+ traceIdx=Math.max(0,Math.min(TRACES[S.trace].steps.length-1,traceIdx+d));
+ drawStep(traceIdx,false);}
+
+/* ------------------------------------------------------------- keyboard */
+addEventListener('keydown',e=>{
+ if(e.key==='/'&&document.activeElement!==q){e.preventDefault();q.focus();}
+ else if(e.key==='Escape'){
+  if(S.trace)stopTrace();
+  else if(S.boot)stopBoot();
+  else{Object.assign(S,{tier:null,sel:null,path:null,pathFrom:null,dead:null,depth:1});
+   inspEl.classList.remove('open');paint();}}});
+
+/* ---------------------------------------------------------------- scale */
+const wrapEl=document.getElementById('stageWrap'),scaler=document.getElementById('scaler');
+function fit(){const s=Math.min(1,(wrapEl.clientWidth-30)/1180);
+ scaler.style.transform=`scale(${s})`;wrapEl.style.height=(900*s+30)+'px';}
+new ResizeObserver(fit).observe(wrapEl);fit();
+
+/* deep link */
+const h=location.hash.slice(1);
+if(h.startsWith('s=')&&byId[h.slice(2)])S.sel=h.slice(2);
+else if(h.startsWith('p=')&&PROFILES.some(p=>p.id===h.slice(2)))S.profile=h.slice(2);
+paint();
+
+if(!reduced){nodeEls.forEach((n,i)=>{n.style.opacity='0';n.style.transform='translateY(8px)';
+ setTimeout(()=>{n.style.transition='opacity .5s,transform .5s';n.style.opacity='';n.style.transform='';},70+i*24);});
+ svg.style.opacity='0';setTimeout(()=>{svg.style.transition='opacity .9s';svg.style.opacity='1';},420);}
+</script>
+</body>
+</html>
