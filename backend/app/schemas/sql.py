@@ -1,16 +1,21 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+Engine = Literal["trino", "spark"]
 
 
 class QueryRequest(BaseModel):
     sql: str = Field(min_length=1)
+    engine: Engine = "trino"
 
 
 class QueryStatus(BaseModel):
     id: uuid.UUID
     status: str
+    engine: str = "trino"
     columns: list[str] | None = None
     rows: list[list] | None = None
     row_count: int | None = None
@@ -23,6 +28,7 @@ class QueryExecutionRead(BaseModel):
 
     id: uuid.UUID
     sql_text: str
+    engine: str
     status: str
     row_count: int | None
     duration_ms: int | None

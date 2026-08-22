@@ -89,19 +89,41 @@ wired into the compiler yet), so the first hop from "a CSV on your laptop" to
    warehouse is `iceberg` — same tables, two different engine-local names.)
 
 5. **Verify** in the app: open **Catalog** (`/catalog`) → expand `iceberg` →
-   `bronze` → `orders_raw`, and confirm the 5 columns are there.
+   `bronze` → `orders_raw`, and confirm the 5 columns are there. **Data
+   Explorer** (`/explorer`) gives you the same Catalog → Schema → Table →
+   Columns tree plus a click-to-preview 100-row sample, in one page.
 
 ## 3. Build the Bronze → Silver pipeline (No-Code Builder)
 
-Open **No-Code Builder** (`/pipelines`). The builder has a node palette on the
-left (grouped by kind — source/transform/quality/destination), a canvas in the
-middle, and a config panel on the right that opens when you click a node. Every
-node's configuration is entered as **raw JSON** in that panel's textarea, then
-applied with the **Apply** button — there are no separate labeled form fields.
+Open **No-Code Builder** (`/pipelines`). The builder has a searchable node
+palette on the left (grouped by kind — source/transform/quality/destination,
+each button with a one-line description tooltip), a canvas in the middle, and
+a config panel on the right that opens when you click a node. Every node type
+used in this walkthrough gets **labeled form fields** — text/number inputs,
+dropdowns, comma-separated list fields, and key→value row editors for
+dict-style config like `casts`/`aggregations` — instead of raw JSON. The
+`iceberg_table` source's **Schema**/**Table** fields are live dropdowns
+populated from the real Trino catalog, so you never have to hand-type a
+schema/table name. Whatever you enter still compiles down to the same JSON
+shown in the tables below; you can inspect or hand-edit it anytime via the
+collapsed **Advanced: raw JSON** section at the bottom of the panel (only
+needed for the handful of types with no structured form yet, e.g.
+`minio`/`postgresql`/`kafka` destinations and the `schema` quality check).
+
+> The palette's top bar also has a pipeline search box and **New**/**Duplicate**/
+> **Delete** buttons for managing saved pipelines, and each node's panel shows
+> its node ID with a **Copy ID** button — handy when writing `window`/`filter`
+> expressions that reference another node's output columns. Select a node and
+> press **Delete**/**Backspace** to remove it (with a confirmation prompt).
+> On the canvas, each node is rendered as a colored card with its own icon —
+> blue for sources, emerald for transforms, amber for quality checks, violet
+> for destinations — so you can read the shape of a pipeline at a glance
+> without opening every node.
 
 1. Name the pipeline: type `bronze_to_silver_orders` in the name box at the top.
-2. Add these 6 nodes (click the matching button under each kind heading), then
-   click each node and paste its config into the JSON textarea, click **Apply**:
+2. Add these 6 nodes (click the matching button under each kind heading — use
+   the node search box if the palette list gets long), then click each node
+   and fill in its form fields (the equivalent JSON is shown for reference):
 
    | # | Kind | Type | Config JSON |
    |---|---|---|---|
@@ -170,6 +192,19 @@ LIMIT 20;
 
 Check **Recent history** afterwards to see the query logged.
 
+> You can run the exact same query from **Data Explorer** (`/explorer`)
+> instead: it has its own SQL editor with the same run/cancel/results flow,
+> plus the catalog tree on the left and a Trino/Spark engine toggle if you
+> want to try running it against the Spark Thrift Server (use the `catalog`
+> alias instead of `iceberg` when Spark is selected — see the callout in
+> step 2). **Right-click** any catalog/schema/table/column in that tree for
+> quick actions (preview 100 rows, copy name, copy fully-qualified name,
+> copy a ready-to-run `SELECT`, or run a live row count) — a toast confirms
+> each clipboard copy. There's also a **PySpark Code** mode next to the SQL
+> editor toggle that runs real, hand-written PySpark against a shared
+> `SparkSession` (ADMIN/DATA_ENGINEER only) if you'd rather explore the data
+> with a few lines of code instead of SQL.
+
 ## 7. Check lineage
 
 Open **Lineage** (`/lineage`). Lineage is derived automatically from every saved
@@ -180,32 +215,44 @@ two pipelines you just built.
 ## 8. Orchestrate it with Dagster
 
 Every pipeline you save is runnable from Dagster too — it calls the exact same
-execution function the API uses, just out-of-process. You need each pipeline's
-UUID first:
+execution function the API uses, just out-of-process, and it's all driven from
+the OpenLakehouse **Jobs** page (`/jobs`) — no need to touch the Dagster UI
+directly or paste UUIDs into a launchpad.
 
-```powershell
-$token = (Invoke-RestMethod -Method Post -Uri "http://localhost:8081/realms/openlakehouse/protocol/openid-connect/token" `
-  -Body @{grant_type="password"; client_id="openlakehouse-web"; username="engineer.user"; password="openlakehouse"} `
-  -ContentType "application/x-www-form-urlencoded").access_token
+Open **Jobs**. You'll see two sections:
 
-Invoke-RestMethod -Uri "http://localhost/api/v1/pipelines" -Headers @{Authorization="Bearer $token"} |
-  Select-Object id, name
-```
+- **Scheduled Pipelines** — any pipeline with a schedule set (see below) shows
+  up here with a plain-English description of the schedule (e.g. "Runs daily
+  at 03:00 UTC.") plus its computed next-run time, shown both as an absolute
+  timestamp and a relative countdown ("in 10h"). A background Dagster sensor
+  checks every 30 seconds and automatically launches a real run for each
+  pipeline whose schedule fires — no manual "turn on the schedule" step
+  needed.
+- **Other Pipelines** — every pipeline without a schedule, each with a **Run
+  now** button for one-off manual triggers.
 
-Copy the `id` for `bronze_to_silver_orders`. Then in Dagster
-(http://localhost:3001): **Jobs → run_pipeline_job → Launchpad**, paste:
+Click **Run now** next to `bronze_to_silver_orders` (or any pipeline). You'll
+see a "Run launched" confirmation, and within a few seconds the run appears in
+**Recent Runs** below with its real pipeline name, live status
+(`QUEUED` → `SUCCESS`/`FAILURE`), and relative start/end times ("14m ago") —
+the same Trino/Iceberg write as clicking Run in the Pipeline Builder, just
+orchestrated by Dagster. While a run is in progress, a **Cancel** button lets
+you terminate it early. Once a run has a Dagster op actually executing, click
+**View progress** to expand a live, step-by-step breakdown of every node in
+the pipeline — status, row count, and duration — the same detail you'd get
+watching the canvas in the Pipeline Builder, but for scheduled/Dagster-
+triggered runs too.
 
-```yaml
-ops:
-  run_pipeline_op:
-    config:
-      pipeline_id: "<paste-the-uuid-here>"
-```
-
-Click **Launch Run** and watch it execute for real (same Trino/Iceberg write as
-clicking Run in the UI). There's also a pre-built `all_pipelines_schedule` that
-re-runs whichever pipeline was most recently saved every 15 minutes — turn it on
-from the Dagster **Schedules** tab if you want it running unattended.
+Prefer to schedule it instead? Go back to **Pipelines**, open
+`bronze_to_silver_orders`, expand **Pipeline settings**, and use the
+**Schedule** dropdown — pick **Every 15 minutes**, **Hourly**, **Daily** (with
+a time picker), or **Weekly** (with a day + time picker), and a live summary
+line confirms exactly what you've set (e.g. "Runs weekly on Monday at 03:00
+UTC."). If you need something the presets don't cover, choose **Custom
+cron…** and type a cron expression directly — invalid cron strings are
+rejected immediately with a clear error either way. Save, and it will show up
+under **Scheduled Pipelines** on the Jobs page with its next run time, and
+fire automatically from then on.
 
 ## 9. Visualize it in Superset
 

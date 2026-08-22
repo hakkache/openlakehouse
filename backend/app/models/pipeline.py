@@ -32,6 +32,9 @@ class PipelineRun(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="QUEUED")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     executed_by: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # Set when this run was launched via Dagster (`run_pipeline_op`) so the Jobs page
+    # can correlate a Dagster run with its underlying per-node execution detail.
+    dagster_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -46,3 +49,13 @@ class PipelineNodeRun(Base):
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Added for the Run Log panel (chronological view + for_each iteration grouping):
+    # started_at + a monotonically increasing per-run `sequence` give a stable
+    # chronological ordering (node_id alone repeats across for_each iterations so it
+    # can't be used as a sort key on its own); iteration_index/parent_node_id identify
+    # which for_each iteration (if any) a node run belongs to, so the UI can group
+    # "iteration 0", "iteration 1", ... under their owning for_each node.
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    iteration_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parent_node_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

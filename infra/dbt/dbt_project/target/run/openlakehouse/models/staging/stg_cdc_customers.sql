@@ -2,7 +2,7 @@
   
     
 
-    create table "iceberg"."dbt_staging"."stg_cdc_customers__dbt_tmp"
+    create table "iceberg"."dbt_staging"."stg_cdc_customers"
       
       
     as (

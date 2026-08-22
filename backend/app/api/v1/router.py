@@ -8,12 +8,14 @@ from app.api.v1 import (
     compute,
     connections,
     dashboards,
+    dbt,
     git,
     health,
     jobs,
     ml,
     monitoring,
     pipelines,
+    spark_code,
     sql,
     streaming,
     workspaces,
@@ -36,4 +38,6 @@ api_router.include_router(monitoring.router)
 api_router.include_router(jobs.router)
 api_router.include_router(admin.router)
 api_router.include_router(connections.router)
+api_router.include_router(spark_code.router)
+api_router.include_router(dbt.router)
 

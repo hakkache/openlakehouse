@@ -9,16 +9,19 @@ no separate/fake execution path.
 import uuid
 from datetime import datetime, timezone
 
+from croniter import CroniterBadCronError, croniter
 from dagster import (
+    DefaultSensorStatus,
     Definitions,
     Failure,
     Field,
     OpExecutionContext,
     RunRequest,
+    SensorEvaluationContext,
     SkipReason,
     job,
     op,
-    schedule,
+    sensor,
 )
 from sqlalchemy import select
 
@@ -41,6 +44,7 @@ def run_pipeline_op(context: OpExecutionContext) -> str:
             pipeline_id=pipeline.id,
             status="QUEUED",
             executed_by="dagster",
+            dagster_run_id=context.run_id,
             started_at=datetime.now(timezone.utc),
         )
         db.add(run)
@@ -49,7 +53,7 @@ def run_pipeline_op(context: OpExecutionContext) -> str:
     finally:
         db.close()
 
-    context.log.info(f"Executing pipeline {pipeline_id} via run {run_id}")
+    context.log.info(f"Executing pipeline {pipeline_id} via run {run_id} (dagster run {context.run_id})")
     # Runs synchronously in this op (unlike the API's background-thread version) --
     # Dagster already gives us out-of-process, tracked, retryable execution.
     _run_pipeline(run_id, pipeline_id, definition, user="dagster")
@@ -72,31 +76,49 @@ def run_pipeline_job():
     run_pipeline_op()
 
 
-@schedule(cron_schedule="*/15 * * * *", job=run_pipeline_job, execution_timezone="UTC")
-def all_pipelines_schedule(context):
-    """Every 15 minutes, (re)run the most recently updated saved pipeline, if any.
-
-    This is a pragmatic default schedule for the MVP: rather than requiring the
-    user to hand-configure a schedule per pipeline_id up front, it picks the most
-    recently saved/updated Pipeline row so the Dagster schedule/daemon path is
-    exercised against real, current pipeline definitions.
+@sensor(job=run_pipeline_job, minimum_interval_seconds=30, default_status=DefaultSensorStatus.RUNNING)
+def scheduled_pipelines_sensor(context: SensorEvaluationContext):
+    """Real per-pipeline scheduling: each saved Pipeline can set its own cron string in
+    `PipelineDefinition.schedule` (surfaced in the Pipeline Builder's "Pipeline settings"
+    panel). On every tick this checks, per pipeline, whether its cron fired since the
+    last tick and - if so - launches a real run for exactly that pipeline_id. This
+    replaces the earlier MVP behavior of blindly re-running "whichever pipeline was
+    most recently saved" every 15 minutes.
     """
+    now = datetime.now(timezone.utc)
+    last_checked = datetime.fromisoformat(context.cursor) if context.cursor else now
+
     db = SessionLocal()
     try:
-        pipeline = db.scalar(select(Pipeline).order_by(Pipeline.updated_at.desc()).limit(1))
+        pipelines = list(db.scalars(select(Pipeline)))
     finally:
         db.close()
 
-    if not pipeline:
-        return SkipReason("No saved pipelines to run")
+    run_requests = []
+    for pipeline in pipelines:
+        cron = (pipeline.definition or {}).get("schedule")
+        if not cron:
+            continue
+        try:
+            next_fire = croniter(cron, last_checked).get_next(datetime)
+        except (CroniterBadCronError, ValueError):
+            continue
+        if last_checked < next_fire <= now:
+            run_requests.append(
+                RunRequest(
+                    run_key=f"{pipeline.id}:{next_fire.isoformat()}",
+                    run_config={"ops": {"run_pipeline_op": {"config": {"pipeline_id": str(pipeline.id)}}}},
+                )
+            )
 
-    return RunRequest(
-        run_key=None,
-        run_config={"ops": {"run_pipeline_op": {"config": {"pipeline_id": str(pipeline.id)}}}},
-    )
+    context.update_cursor(now.isoformat())
+    if not run_requests:
+        return SkipReason("No pipeline schedules fired since last check")
+    return run_requests
 
 
 defs = Definitions(
     jobs=[run_pipeline_job],
-    schedules=[all_pipelines_schedule],
+    sensors=[scheduled_pipelines_sensor],
 )
+

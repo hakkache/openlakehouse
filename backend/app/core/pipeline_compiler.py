@@ -394,3 +394,44 @@ def predecessors(node_id: str, defn: PipelineDefinition) -> list[str]:
     return _predecessors(node_id, defn.edges)
 
 
+# Public wrappers around the per-node SQL builders above, reused by
+# app.core.pipeline_executor to run individual nodes step-by-step (materializing
+# each to its own Trino view/table) when a pipeline mixes in advanced node kinds
+# (variable/code/control/api_ingestion/sub_pipeline) that can't be compiled into a
+# single CTE chain.
+def compile_source_sql(node: PipelineNode) -> str:
+    return _compile_source(node)
+
+
+def compile_transform_sql(node: PipelineNode, pred_alias: str, alias_of: dict[str, str]) -> str:
+    return _compile_transform(node, pred_alias, alias_of)
+
+
+def compile_quality_sql(node: PipelineNode, pred_alias: str) -> str:
+    return _compile_quality(node, pred_alias)
+
+
+def compile_destination_target(node: PipelineNode) -> str:
+    return _compile_destination_target(node)
+
+
+def evaluate_quality(node: PipelineNode, value: int) -> tuple[bool, str]:
+    """Shared pass/fail interpretation of a quality node's check-query result,
+    used by both the single-SQL engine (app/api/v1/pipelines.py) and the
+    step-by-step engine (app/core/pipeline_executor.py)."""
+    cfg = node.config
+    t = node.type
+    if t == "row_count":
+        min_v = cfg.get("min")
+        max_v = cfg.get("max")
+        if min_v is not None and value < min_v:
+            return False, f"Row count {value} is below minimum {min_v}"
+        if max_v is not None and value > max_v:
+            return False, f"Row count {value} exceeds maximum {max_v}"
+        return True, f"Row count {value} within bounds"
+    # not_null / unique / range / regex / freshness all report a "violations" count
+    if value > 0:
+        return False, f"{value} row(s) violated the '{t}' check"
+    return True, f"0 violations for '{t}' check"
+
+

@@ -1,5 +1,30 @@
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../services/api'
+import { api, TargetHealth } from '../services/api'
+
+interface JobSummary {
+  job: string
+  up: number
+  total: number
+}
+
+function summarizeByJob(targets: TargetHealth[]): JobSummary[] {
+  const byJob = new Map<string, JobSummary>()
+  for (const t of targets) {
+    const entry = byJob.get(t.job) ?? { job: t.job, up: 0, total: 0 }
+    entry.total += 1
+    if (t.up) entry.up += 1
+    byJob.set(t.job, entry)
+  }
+  return Array.from(byJob.values()).sort((a, b) => a.job.localeCompare(b.job))
+}
+
+function healthColor(up: number, total: number) {
+  if (total === 0) return 'bg-slate-100 text-slate-600 border-slate-200'
+  if (up === total) return 'bg-green-50 text-green-800 border-green-200'
+  if (up === 0) return 'bg-red-50 text-red-800 border-red-200'
+  return 'bg-amber-50 text-amber-800 border-amber-200'
+}
 
 export default function MonitoringPage() {
   const { data, isLoading, error } = useQuery({
@@ -7,6 +32,12 @@ export default function MonitoringPage() {
     queryFn: () => api.getMonitoringStatus(),
     refetchInterval: 10000,
   })
+
+  const jobSummaries = useMemo(() => summarizeByJob(data?.targets ?? []), [data?.targets])
+  const totalTargets = data?.targets.length ?? 0
+  const upTargets = data?.targets.filter((t) => t.up).length ?? 0
+  const downTargets = totalTargets - upTargets
+  const healthPct = totalTargets > 0 ? Math.round((upTargets / totalTargets) * 100) : 0
 
   return (
     <div className="flex h-full flex-col gap-4 p-6">
@@ -46,6 +77,46 @@ export default function MonitoringPage() {
         <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           Prometheus is not reachable. Start it with the <code>monitoring</code> compose profile.
         </p>
+      )}
+
+      {data && data.targets.length > 0 && (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Overall health</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900">{healthPct}%</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total targets</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900">{totalTargets}</p>
+          </div>
+          <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-green-700">Healthy</p>
+            <p className="mt-1 text-2xl font-bold text-green-800">{upTargets}</p>
+          </div>
+          <div className={`rounded-lg border p-4 ${downTargets > 0 ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-white'}`}>
+            <p className={`text-xs font-semibold uppercase tracking-wider ${downTargets > 0 ? 'text-red-700' : 'text-slate-400'}`}>
+              Down
+            </p>
+            <p className={`mt-1 text-2xl font-bold ${downTargets > 0 ? 'text-red-800' : 'text-slate-900'}`}>{downTargets}</p>
+          </div>
+        </div>
+      )}
+
+      {data && jobSummaries.length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">By service</p>
+          <div className="flex flex-wrap gap-2">
+            {jobSummaries.map((j) => (
+              <span
+                key={j.job}
+                className={`rounded-full border px-3 py-1 text-xs font-medium ${healthColor(j.up, j.total)}`}
+                title={`${j.up}/${j.total} instances up`}
+              >
+                {j.job}: {j.up}/{j.total}
+              </span>
+            ))}
+          </div>
+        </div>
       )}
 
       {data && data.targets.length > 0 && (

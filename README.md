@@ -309,6 +309,24 @@ flowchart LR
     DestNodes -.->|source/destination pairs derive| LineageGraph["Lineage graph"]
 ```
 
+### Scheduling & the Jobs page
+
+The Pipeline Builder's "Pipeline settings" panel has a friendly schedule picker instead of a raw cron field — pick **No schedule**, **Every 15 minutes**, **Hourly**, **Daily**, **Weekly**, or drop into **Custom cron…** for anything more specific, and a plain-English summary (e.g. "Runs weekly on Monday at 03:00 UTC.") updates live as you choose. Behind the scenes it's still a real cron string, validated server-side and picked up by a Dagster sensor that polls every 30s for schedules due to fire.
+
+The **Jobs** page (`/jobs`) is where you see it all run: a Scheduled Pipelines table with the same human-readable schedule description plus a computed next-run time (absolute + relative, e.g. "in 10h"), a Recent Runs table with relative timestamps ("14m ago") and live status, and a "View progress" toggle on each run that expands a step-by-step breakdown of every node in the pipeline — status, row count, and duration — polling live while the run is still in progress.
+
+### Advanced nodes: variables, code, control flow, API ingestion, sub-pipelines
+
+Pipelines aren't limited to the source/transform/quality/destination flow above. Add any of these node kinds to unlock a step-by-step execution engine (still real, still runs against live Trino/Iceberg — just executed node-by-node instead of compiled into one SQL statement):
+
+- **variable** — `literal` (a constant, supports `{{other_var}}` substitution) or `from_query` (stores the first cell of a SQL query's first row)
+- **code** — `sql` (an arbitrary statement, can store its result into a variable), `python`, or `pyspark` (arbitrary code with the shared `variables` dict available by reference; `python`/`pyspark` nodes require the `ADMIN` or `DATA_ENGINEER` role to run)
+- **control** — `if` (skips a configured list of node ids depending on a condition evaluated against `variables`) or `for_each` (re-runs a configured list of body node ids once per item in a list variable)
+- **api_ingestion** — `rest_get` / `rest_post` (calls a REST API, stores the JSON response into a variable)
+- **sub_pipeline** — `call` (runs another saved pipeline inline, in the same run, with optional variable sharing)
+
+A pipeline using only the original 4 node kinds still compiles to a single SQL statement exactly as before; the advanced engine only activates when at least one of these new kinds is present.
+
 ## Pipeline run lifecycle
 
 ```mermaid
@@ -363,9 +381,11 @@ flowchart LR
 | Area | What you get |
 |---|---|
 | **Ingestion & Storage** | MinIO (S3-compatible object storage), Iceberg table format via the Apache Polaris REST catalog |
-| **Compute** | Apache Spark (Master/Worker/History Server) for batch & structured streaming jobs |
+| **Compute** | Apache Spark (Master/Worker/History Server) for batch & structured streaming jobs; a Compute dashboard (`/compute`) shows every live Spark application, Trino query, and Jupyter kernel with the ability to kill a runaway one |
 | **SQL Analytics** | Trino querying Iceberg tables directly from the browser, with saved queries & history |
-| **No-Code Pipelines** | Visual drag-and-drop pipeline builder (source → transform → quality checks → destination) compiling down to real Spark SQL |
+| **Data Explorer** | Catalog → Schema → Table → Columns tree browser plus an advanced SQL editor; click a table to preview it instantly, right-click any catalog/schema/table/column for quick actions (copy name, copy fully-qualified name, copy `SELECT`, run row count), or write SQL by hand and run it against either Trino or a real Spark Thrift Server. A separate "PySpark Code" mode (ADMIN/DATA_ENGINEER only) runs real, hand-written PySpark against a shared SparkSession (with a live status indicator, idle auto-stop, and a manual "Stop session" control), with console-style stdout/stderr output |
+| **No-Code Pipelines** | Visual drag-and-drop pipeline builder (drag or click to add nodes, collapsible node-palette categories) with guided per-node forms, live catalog pickers, and color/icon-coded nodes per node kind. Beyond the original source → transform → quality checks → destination flow (compiled to a single Spark SQL statement), pipelines can also use **variable**, **code** (SQL/Python/PySpark), **control flow** (`if`/`for_each`), **API ingestion** (REST GET/POST), and **sub-pipeline** nodes, executed step-by-step by a dedicated engine (Python/PySpark code nodes require the ADMIN/DATA_ENGINEER role) |
+| **ER Diagram** | Auto-generated entity-relationship diagram (`/er-diagram`) per catalog/schema — infers foreign-key relationships heuristically from `<entity>_id`-style column names, rendered as a React Flow graph |
 | **Orchestration** | Dagster for scheduling and running pipelines/jobs |
 | **Streaming & CDC** | Kafka (KRaft mode) + Debezium capturing Postgres changes in real time |
 | **Transformations** | dbt-core against Trino (staging → intermediate → marts) |
@@ -375,7 +395,7 @@ flowchart LR
 | **Machine Learning** | MLflow experiment tracking & model registry, with a training job you can run out of the box |
 | **Notebooks** | Jupyter with PySpark pre-wired to the same Iceberg/Spark cluster |
 | **Git** | Self-hosted Gitea for versioning pipelines/notebooks/dbt models |
-| **Observability** | Prometheus, Grafana, Loki and an OpenTelemetry collector, all pre-provisioned |
+| **Observability** | Prometheus, Grafana, Loki and an OpenTelemetry collector, all pre-provisioned; the in-app Monitoring page (`/monitoring`) adds an overall-health summary and a per-service grouped status view on top of the raw Prometheus targets list |
 | **AI Assistant** | A local LLM (Ollama) wired into the platform for in-app help |
 | **Security** | Keycloak (OIDC/JWT, RBAC across 5 roles) + OpenBao for secrets management |
 | **Gateway** | Traefik reverse proxy — one entrypoint (`http://localhost`) for the whole platform |
@@ -426,7 +446,7 @@ flowchart TB
 |---|---|
 | `core` | traefik, frontend, backend, postgres, redis, minio |
 | `security` | keycloak, openbao (+ core) |
-| `lakehouse` | spark-master, spark-worker, polaris, trino (+ core) |
+| `lakehouse` | spark-master, spark-worker, spark-thriftserver, polaris, trino (+ core) |
 | `data-engineering` | dagster, dbt, openmetadata, great-expectations (+ lakehouse) |
 | `streaming` | kafka, kafka-ui, debezium, flink (+ lakehouse) |
 | `ml` | mlflow (+ lakehouse) |
@@ -456,6 +476,7 @@ Everything is reachable through Traefik at `http://localhost` — these direct p
 | Spark History Server | `18080` | Completed job history |
 | Jupyter | `8888` | PySpark-enabled notebooks |
 | Trino | `8082` | SQL engine UI + JDBC/REST |
+| Spark Thrift Server | `10001` | HiveServer2/Thrift SQL endpoint used by Data Explorer's "Run via Spark" engine |
 | Dagster | `3001` | Orchestration UI |
 | OpenSearch | `9200` | Backing search index for OpenMetadata |
 | OpenMetadata | `8585` | Data catalog UI |

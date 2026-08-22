@@ -176,8 +176,11 @@ and `/jupyter/lab` correctly returned the real JupyterLab shell instead of the S
 | Pipeline execution | ✅ | `POST /api/v1/pipelines/{id}/run` (202, background `threading.Thread` mirroring the Phase 5 SQL executor pattern) executes nodes in topological order against real Trino, writes `PipelineRun`/`PipelineNodeRun` rows with per-node status/row_count/duration_ms/message |
 | Run status polling | ✅ | `GET /api/v1/pipelines/runs/{run_id}` returns overall + per-node status (`PENDING`/`RUNNING`/`SUCCESS`/`FAILED`/`SKIPPED`) |
 | **Real end-to-end run — backend API** | ✅ | Built a 4-node pipeline (source: `bronze.test` → filter: `id < 200` → quality: `not_null` on `id` → destination: `iceberg_bronze.pipeline_smoke_test`) via `POST /api/v1/pipelines` with a real Keycloak token; compiled via `/compile` (verified generated SQL); ran via `/run`; polled to `SUCCESS` with `src1: 11 rows`, `filt1: 11 rows`, `q1: 0 violations`, `dest1: "Inserted into iceberg.bronze.pipeline_smoke_test", 11 rows`; verified the actual Iceberg table via Trino CLI (`SELECT COUNT(*)` → 22 after two runs, i.e. CTAS then INSERT, confirming real writes) |
-| Frontend Pipeline Builder (`PipelinesPage.tsx`) | ✅ | `@xyflow/react` (React Flow) canvas; node palette grouped by kind (source/transform/quality/destination) with all types from the spec; drag-connect edges; node config editor (JSON textarea) in a side panel; Save/Load pipelines (dropdown of saved pipelines); "View Compiled SQL" button; "Run" button with 1.5s polling and node status color-coding (border glow per PENDING/RUNNING/SUCCESS/FAILED/SKIPPED) |
+| Frontend Pipeline Builder (`PipelinesPage.tsx`) | ✅ | `@xyflow/react` (React Flow) canvas; searchable node palette grouped by kind (source/transform/quality/destination) with per-type description tooltips; drag-connect edges; Save/Load pipelines (searchable dropdown), New/Duplicate/Delete pipeline actions; "View Compiled SQL" button with syntax-highlighted preview + copy; "Run" button with 1.5s polling and node status color-coding + emoji icon (border glow per PENDING/RUNNING/SUCCESS/FAILED/SKIPPED) |
+| Pipeline Builder UX pass — structured per-node forms | ✅ | Replaced the raw-JSON-only config editor with declarative `FIELD_SPECS` (text/number/select/list/dict/node-ref/schema-select/table-select inputs) covering every compiler-executable node type; `iceberg_table` source and `iceberg_bronze/silver/gold` destinations get live Schema/Table dropdowns from `/catalog/schemas`+`/catalog/tables`; unsupported types (`minio`/`postgresql`/`kafka` destinations, `schema` quality) fall back to a raw-JSON editor with a warning banner. Also added: node ID display + Copy ID button, collapsible "Advanced: raw JSON" per node, `window.confirm()` guards on delete node/pipeline and on navigating away with unsaved changes, keyboard Delete/Backspace to remove the selected node, an error banner (`actionError`) on save/run/compile failures, and a "Pipeline settings" panel wiring the previously-dead `schedule`/`parameters` schema fields into the UI. Verified live in-browser against the real backend: catalog dropdowns returned real Trino schemas, node-ref dropdowns updated as nodes were added, and the dict row editor accepted typed input without dropping characters |
+| Friendly schedule picker ("Pipeline settings") | ✅ | Replaced the raw cron text box with a preset picker (`frontend/src/utils/cron.ts`): **No schedule** / **Every 15 minutes** / **Hourly** (minute picker) / **Daily** (time picker) / **Weekly** (day + time picker) / **Custom cron…** (raw text, for anything the presets can't express) — each choice is translated to the actual cron string client-side (`buildCron()`) and a plain-English summary (e.g. "Runs weekly on Monday at 03:00 UTC.") renders live via `describeCron()`. Loading a saved pipeline reverse-maps its stored cron back into the picker's fields (`detectSchedule()`) so editing an existing schedule doesn't require reading cron syntax. Backend validation errors (e.g. an invalid custom cron) are now parsed out of FastAPI's JSON error body into a clean one-line message (`parseErrorMessage()` in `api.ts`) instead of showing raw JSON. |
 | **Real browser test — full flow** | ✅ | Verified at `http://localhost/pipelines` (via Traefik): loaded the saved `smoke_test_pipeline` — canvas rendered all 4 nodes (`src`/`filter`/`nn`/`dest`) with correct edges; clicked "View Compiled SQL" and confirmed the exact same generated CTE-chain SQL as the backend API test |
+| **Real browser test — schedule picker** | ✅ | Loaded `fifa_gold_top_scorers`, switched Schedule to **Weekly**, picked Monday at `03:00`, confirmed the live summary read "Runs weekly on Monday at 03:00 UTC.", saved successfully, and confirmed it showed up correctly on the Jobs page's Scheduled Pipelines table with the same description, the raw cron (`0 3 * * 1`), and a computed next-run time ("in 10h"). |
 
 **Root cause fixed this phase:**
 - The executor's destination-node row-count re-query used `cte_prefix_upto[<immediate predecessor>]`, but `cte_prefix_upto` was only populated for `source`/`transform` nodes in the compiler — when a destination's immediate predecessor was a `quality` node (which does not add a CTE), this raised a `KeyError` (surfaced as the run failing with `error: "'q1'"`). Fixed by having the compiler also record a passthrough `cte_prefix_upto[node_id]` for `quality` and `destination` nodes (copied from their predecessor's), and having the executor use the destination node's own `cte_prefix_upto` entry directly instead of walking back to a predecessor.
@@ -194,10 +197,17 @@ and `/jupyter/lab` correctly returned the real JupyterLab shell instead of the S
 | Dagster webserver + daemon deployed | ✅ | Custom image (`infra/dagster/Dockerfile`) built on `python:3.11-slim`, installs `dagster`/`dagster-webserver`/`dagster-postgres` alongside the backend's own `requirements.txt` so it can import `app.*` directly; `dagster-webserver` on port `3001` (host), `dagster-daemon run` for schedules/sensors/queued run coordination |
 | Dagster storage backend | ✅ | Postgres-backed run/event-log/schedule storage in a **dedicated** `dagster` database (separate from the backend's `openlakehouse` database) to avoid an `alembic_version` table collision — confirmed this was a real conflict, not a hypothetical one (see root cause below) |
 | Job definition reuses real pipeline executor | ✅ | `infra/dagster/repository.py` defines `run_pipeline_op`/`run_pipeline_job`, which directly imports and calls `app.api.v1.pipelines._run_pipeline` (the exact same function the REST API's `/run` endpoint uses) — no separate/fake execution path, per spec's "no fake execution" constraint |
-| Schedule | ✅ | `all_pipelines_schedule`, cron `*/15 * * * *`, dynamically picks the most-recently-updated saved `Pipeline` row and runs it (`SkipReason` if none exist) — avoids hardcoding a specific pipeline id into the schedule definition |
+| Real per-pipeline scheduling | ✅ | `scheduled_pipelines_sensor` (a Dagster `@sensor`, replacing the earlier MVP `all_pipelines_schedule`) polls every 30s, reads each saved `Pipeline.definition.schedule` cron string directly, and uses `croniter` with a cursor (`context.cursor`, persisted between ticks) to detect exactly which pipelines' schedules fired since the last check — each fired pipeline gets its own `RunRequest` keyed by `f"{pipeline_id}:{next_fire_iso}"` for idempotency. This replaces the old "always re-run whichever pipeline was most recently saved" behavior with real, independent per-pipeline cron scheduling. |
+| Cron validation at save time | ✅ | `PipelineDefinition.schedule` now has a Pydantic `field_validator` using `croniter.is_valid()` — saving a pipeline with an invalid cron string (e.g. via the Pipeline Builder's "Pipeline settings" panel) is rejected immediately with a clear 422 error instead of silently never firing. |
+| Manual trigger endpoint | ✅ | `POST /api/v1/jobs/pipelines/{pipeline_id}/trigger` launches a real Dagster run via the `launchRun` GraphQL mutation (verified against Dagster's official GraphQL schema) and returns the new `dagster_run_id`; exposed in the Jobs page as a "Run now" button on every pipeline (scheduled or not). |
+| Cancel / terminate endpoint | ✅ | `POST /api/v1/jobs/runs/{dagster_run_id}/terminate` calls Dagster's `terminateRun` GraphQL mutation; the Jobs page shows a "Cancel" button on any run whose status is still in-flight (`QUEUED`/`NOT_STARTED`/`STARTING`/`STARTED`/`CANCELING`). |
+| Dagster run ↔ local `PipelineRun` linkage | ✅ | `pipeline_runs.dagster_run_id` (new column, migration `0006_pipeline_dagster_link`) is set to `context.run_id` when `run_pipeline_op` creates its `PipelineRun` row. `GET /api/v1/jobs/status` joins Dagster's `runsOrError` results against local `PipelineRun` rows by this column, so the Jobs page's "Recent Runs" table shows the actual pipeline name (not just the generic Dagster job name) for every Dagster-triggered run. |
 | Dependencies / retries / timeouts | 🟡 | Dagster's built-in op/job-level `retry_policy` and step timeouts are available in the framework but not yet wired into a UI-configurable per-pipeline setting; current job is a single op, so "dependencies" are expressed inside the pipeline's own DAG (compiled by `pipeline_compiler.py`), not as separate Dagster op dependencies |
 | **Real job execution verified** | ✅ | Ran `dagster job execute -f repository.py -j run_pipeline_job -c run_config.yaml` (with `pipeline_id` pointing at the Phase 6 smoke-test pipeline) inside the `dagster-webserver` container — log showed `RUN_START` → `run_pipeline_op` executing → `RUN_SUCCESS`; verified via Trino CLI that `iceberg.bronze.pipeline_smoke_test` row count increased by exactly 11 (the source table's row count) after the run, proving the Dagster-triggered execution performed a real `INSERT INTO ... AS SELECT` against Iceberg, not a simulated/no-op run |
-| **Daemon/schedule loads cleanly** | ✅ | `docker logs openlakehouse-dagster-daemon` shows `Instance is configured with the following daemons: ['AssetDaemon', 'BackfillDaemon', 'QueuedRunCoordinatorDaemon', 'SchedulerDaemon', 'SensorDaemon']` with no repository-load errors after fixing the `workspace.yaml` relative path |
+| **Daemon/sensor loads cleanly** | ✅ | `docker logs openlakehouse-dagster-daemon` shows `Instance is configured with the following daemons: [..., 'SensorDaemon']` and `Checking for new runs for sensor: scheduled_pipelines_sensor` / `Sensor scheduled_pipelines_sensor skipped: No pipeline schedules fired since last check` with no repository-load errors |
+| **Trigger → linkage → cancel verified live** | ✅ | Triggered `fifa_gold_top_scorers` from the Jobs UI: got `Run launched (Dagster run 26798429…)`, the run appeared immediately in "Recent Runs" as `QUEUED` with a working Cancel button, and after Dagster finished executing it, a Refresh showed the row correctly updated to `SUCCESS` with the real pipeline name `fifa_gold_top_scorers` (not the generic `run_pipeline_job`) and populated start/end timestamps — confirming the `dagster_run_id` linkage join works end-to-end. |
+| Friendlier Jobs page — visibility & progress | ✅ | Reworked `JobsPage.tsx` for at-a-glance readability: Scheduled Pipelines now shows the same plain-English schedule summary as the Pipeline Builder (`describeCron()`) plus the next-run time as both an absolute timestamp and a relative countdown ("in 10h"); Recent Runs shows relative "Xm/h/d ago" timestamps next to the absolute ones, a pulsing dot on in-progress status badges, and a live "Running…" indicator in the Finished column while a run is still in flight. Each run with a resolved `local_run_id` gets a **View progress** toggle that expands an inline step-by-step breakdown (fetched via the existing `GET /v1/pipelines/runs/{id}` endpoint) showing a completed-steps progress bar plus per-node status dot, row count, and duration — polled every 3s while the run is still active. This surfaces the same per-node detail the Pipeline Builder's canvas already showed for manually-run pipelines, but for Dagster-triggered/scheduled runs too, which previously had zero node-level visibility from the Jobs page. |
+| **Real browser test — run progress detail** | ✅ | Expanded "View progress" on the completed `fifa_gold_top_scorers` run in Recent Runs — confirmed a `4/4 steps` progress bar and per-node rows (`source_… SUCCESS 31558 rows · 0.2s`, two `transform_…` steps, `destination_… SUCCESS 1248 rows · 1.2s`), matching the real row counts from the underlying Trino execution. |
 
 **Root causes fixed this phase:**
 - Pointing Dagster's Postgres storage at the same `openlakehouse` database used by the backend caused a hard crash on startup: `alembic.util.exc.CommandError: Can't locate revision identified by '0003_pipelines'` — Dagster's own `dagster_postgres` storage classes stamp their own `alembic_version` table on first connect, and it collided with the backend's own Alembic-managed `alembic_version` table (same table name, different revision graph). Fixed by creating a separate `dagster` Postgres database and pointing `dagster.yaml`'s three storage configs at a distinct `DAGSTER_PG_DB` env var, while leaving the backend's own `POSTGRES_DB` env var untouched (still needed unchanged so `app.core.config.Settings` connects to the correct database when `repository.py` imports backend modules).
@@ -205,9 +215,9 @@ and `/jupyter/lab` correctly returned the real JupyterLab shell instead of the S
 - `workspace.yaml`'s `python_file.relative_path` resolves relative to the **workspace.yaml file's own directory** (`/opt/dagster/dagster_home`), not the `working_directory` field — using a bare `repository.py` caused `FileNotFoundError: /opt/dagster/dagster_home/repository.py`; fixed by using `../app/repository.py` to correctly reach the file's real location at `/opt/dagster/app/repository.py`.
 
 **Known limitations carried forward:**
-- Dagster is reachable directly at `http://localhost:3001` (its own host-mapped port), not yet routed through Traefik — unlike the SQL/Pipelines pages, there is no Traefik rule for `/dagster` yet and no link from the OpenLakehouse frontend nav; this is a documented gap for a future pass, not a blocker for the orchestration functionality itself.
-- Per-pipeline schedule configuration (cron expression stored on the `Pipeline.definition.schedule` field, already present in the JSON model) is not yet read by `repository.py` to auto-generate one Dagster schedule per pipeline; the current single `all_pipelines_schedule` is a pragmatic MVP default that always targets the most recently updated pipeline.
+- Dagster is reachable directly at `http://localhost:3001` (its own host-mapped port), not yet routed through Traefik — unlike the SQL/Pipelines pages, there is no Traefik rule for `/dagster` yet, though the Jobs page now links to it directly ("Open Dagster" button).
 - Explicit multi-node Dagster-level dependency graphs, op-level retry policies, and timeouts are not yet exposed as configurable per-pipeline settings in the UI — the underlying Dagster job is currently a single op per pipeline run.
+- The sensor's minimum poll interval is 30 seconds, so a schedule's actual fire time can lag its cron target by up to that amount — acceptable for the batch/analytics workloads this targets, but not suitable for sub-minute precision.
 
 ## Phase 8 — Catalog (OpenMetadata)
 
@@ -240,6 +250,11 @@ and `/jupyter/lab` correctly returned the real JupyterLab shell instead of the S
 | Lineage API | ✅ | `GET /api/v1/pipelines/lineage` (`backend/app/api/v1/pipelines.py`) — aggregates lineage edges across every saved pipeline into one graph (`LineageGraph` in `backend/app/schemas/lineage.py`: `nodes: [{id, label}]`, `edges: [{id, source, target, pipeline_id, pipeline_name}]`) |
 | Lineage UI | ✅ | `frontend/src/pages/LineagePage.tsx` — new React Flow (`@xyflow/react`) graph view, custom simple left-to-right layered layout (columns by longest-path from source), routed at `/lineage` in `App.tsx` (previously a "Coming Soon" placeholder); existing sidebar nav link now points at the real page |
 | **Real end-to-end verification** | ✅ | Created a real pipeline (`lineage-demo`) via the API with a source node reading `iceberg.bronze.test` and a destination node writing `iceberg.bronze.lineage_demo`; ran it via `POST /pipelines/{id}/run` and confirmed `SUCCESS` with real row counts (11 rows read, 11 rows written, real `CREATE TABLE`/`INSERT` in Trino/Iceberg); called `GET /pipelines/lineage` and confirmed the response contains exactly the expected edge (`iceberg.bronze.test` → `iceberg.bronze.lineage_demo`, correct `pipeline_id`/`pipeline_name`); verified the same graph renders correctly in the browser at `/lineage` (two connected nodes, animated edge) |
+| Freshness/health overlay | ✅ | `LineageGraphNode` now also carries `layer` (`bronze`/`silver`/`gold`/`other`, derived from the table's schema) and `last_status`/`last_run_at`/`last_row_count`, resolved by joining each destination node's internal id against its most recent `PipelineNodeRun`/`PipelineRun` (`get_lineage` in `pipelines.py`). Surfaces real write history on the graph instead of only structure — a stale/failed table is now visually distinguishable from a healthy one. |
+| Layer color-coding + legend | ✅ | `LineagePage.tsx` colors nodes by medallion layer (bronze/silver/gold/other) and renders a small status dot (green/red/gray) from `last_status`; a fixed legend panel explains both. |
+| Click-to-inspect side panel | ✅ | Clicking a node opens a side panel with its full FQN, layer, last write status/time/row count, and the list of pipelines that write to it ("Written by") / read from it ("Read by") — each a deep link to `/pipelines?pipeline=<id>` that auto-loads that exact pipeline in the Builder (`PipelinesPage.tsx` now reads a `pipeline` query param via `useSearchParams` on mount). |
+| Search & trace-through highlighting | ✅ | A search box filters nodes by table name and highlights the matched node's full connected subgraph (all upstream + downstream tables via BFS in both edge directions), dimming everything else — makes it possible to answer "what feeds this table, and what does it feed?" at a glance in a large multi-pipeline graph. |
+| **Real end-to-end verification (this pass)** | ✅ | Verified at `http://localhost/lineage` against the real FIFA demo pipelines: `bronze.fifa_player_matches` correctly shows "No tracked pipeline run yet" (it's populated by an external Spark job, not the pipeline builder, so it has no `PipelineNodeRun` history) while every silver/gold table shows "Last run: SUCCESS"; clicked `gold.top_scorers` — side panel showed `Status: SUCCESS`, a real timestamp, `1,248 rows`, and a "Written by" link to `fifa_gold_top_scorers`; clicked that link and confirmed it navigated to `/pipelines?pipeline=<id>` and auto-loaded the exact pipeline (4 nodes, previously-saved weekly schedule) into the Builder canvas. |
 
 **Root causes fixed this phase:**
 - The new `GET /pipelines/lineage` route was initially shadowed by the existing `GET /pipelines/{pipeline_id}` route (a `uuid.UUID`-typed path parameter): FastAPI matches routes in registration order, so a request to `/pipelines/lineage` was being routed to `get_pipeline` and failing with a 422 (invalid UUID `"lineage"`). Fixed by moving the `/lineage` route's registration to immediately after `list_pipelines` and before `get_pipeline`.
@@ -248,6 +263,8 @@ and `/jupyter/lab` correctly returned the real JupyterLab shell instead of the S
 - Lineage is derived only from the pipeline definition graph in OpenLakehouse's own control plane; it is **not** yet synchronized into OpenMetadata's native Lineage API/UI (`PUT /api/v1/lineage` against OpenMetadata table entity IDs) — OpenMetadata's own `/lineage` tab for ingested tables will not show these edges until that sync is implemented.
 - Lineage edges are only produced for `iceberg_table` source nodes and `iceberg_bronze`/`iceberg_silver`/`iceberg_gold` destination nodes, matching the pipeline compiler's currently-supported real-SQL node types; other UI-visible source/destination types (e.g. `minio`, `postgresql`, `kafka`) do not yet produce lineage edges since the compiler itself does not compile them to real SQL.
 - The lineage graph layout is a simple custom left-to-right layered algorithm (longest-path-from-source column assignment), not a general-purpose DAG layout library (e.g. `dagre`) — sufficient for the small, mostly-linear graphs produced by this project's pipelines, but may not scale well to large/highly-branching lineage graphs.
+- Lineage is table-level only, not column-level — a destination node's edges point at every source table reachable through its upstream transforms/joins, without indicating which specific output columns came from which specific source columns.
+- Tables written entirely outside the No-Code Pipeline Builder (Spark CDC/streaming jobs in `infra/spark/`, dbt models in `infra/dbt/`) never appear as graph nodes at all unless some pipeline also reads or writes them — e.g. `bronze.fifa_player_matches` only shows up here because gold/silver pipelines read it as a source, not because the Spark ingestion job that created it is itself tracked.
 
 ## Phase 10 — Data Quality
 
@@ -489,10 +506,176 @@ These were completed in Phase 20 below — see that section for what shipped.
 `docker-compose.yml`'s actual services; spec section 22 only requires Kafka + Spark Structured
 Streaming + Iceberg for the demo pipeline).
 
-## OpenLakehouse implementation: COMPLETE
+## Phase 21 — Data Explorer: Catalog Tree + Advanced SQL Editor + Spark Engine
+
+| Item | Status | Notes |
+|---|---|---|
+| Backend: `engine` column on `query_executions` | ✅ | Alembic migration `0007_query_execution_engine`, `String(20)` default `"trino"`; `QueryExecution` model + `QueryRequest`/`QueryStatus`/`QueryExecutionRead` schemas all carry an `engine: Literal["trino", "spark"]` field |
+| Backend: Spark SQL client via Thrift/HiveServer2 | ✅ | `app/core/spark_sql_client.py` — `PyHive==0.7.0` + `thrift==0.16.0`, `hive.Connection(..., auth="NOSASL")`; no `sasl`/`thrift_sasl` C-extensions or extra system packages needed |
+| Backend: engine-aware query execution | ✅ | `POST /api/v1/sql/queries` accepts `engine: "trino" \| "spark"` (default `trino`); `_execute_in_background` routes to `get_trino_connection()` or `get_spark_connection()`; status/poll/history responses include the `engine` used |
+| New service: Spark Thrift Server | ✅ | `spark-thriftserver` in `docker-compose.yml`, `apache/spark:3.5.9-scala2.12-java17-python3-ubuntu`, runs `HiveThriftServer2` against `spark://spark-master:7077`, NOSASL auth, port `${SPARK_THRIFT_PORT:-10001}` → `10000`, shares `infra/spark/spark-defaults.conf` (Iceberg REST catalog config) |
+| Frontend: `ExplorerPage.tsx` rewritten | ✅ | Recursive Catalog → Schema → Table → Columns tree (lazy-loaded per level via existing `catalog` API), dark SQL editor with Ctrl/Cmd+Enter to run, Trino/Spark engine toggle, results table with NULL styling, row count + duration badge |
+| Frontend: click-to-preview | ✅ | Clicking a table auto-builds `SELECT * FROM <catalog>.<schema>.<table> LIMIT 100` and runs it immediately against the currently-selected engine |
+| **Real query — Trino engine, browser E2E** | ✅ | Clicked `iceberg.bronze.fifa_player_matches` in the tree with "Run via Trino" selected → `trino` badge, `100 row(s) in 141 ms`, real columns/rows rendered |
+| **Real query — Spark engine, browser E2E** | ✅ | Clicked the same table with "Run via Spark" selected → `spark` badge, real rows returned (verified both a `LIMIT` preview and `SELECT COUNT(*)` → `54600`, `4155 ms`) through Spark Thrift Server → Iceberg REST catalog → MinIO |
+
+**Bugs found and fixed this phase (all via live browser + container-log debugging, not just code review):**
+- **`SCHEMA_NOT_FOUND: catalog.default`** — Spark/Hive session initialization references
+  `<spark.sql.defaultCatalog>.default` on every new Thrift Server session regardless of the
+  query text; the Polaris-backed catalog only had `bronze`/`silver`/`gold` namespaces, no
+  `default`. Fixed with a one-time `CREATE SCHEMA IF NOT EXISTS iceberg.default` (via Trino;
+  Trino's `iceberg` and Spark's `catalog` aliases point at the same physical Polaris
+  catalog/warehouse, so the namespace is visible to both engines).
+- **`NoClassDefFoundError: org/apache/iceberg/shaded/.../jackson/databind/ext/OptionalHandlerFactory`**
+  — `iceberg-aws-bundle`'s relocated/shaded Jackson is missing some `ext` subpackage classes,
+  triggered by the Iceberg REST catalog's OAuth2/credential-vending HTTP calls (not
+  Thrift-specific). Fixed by adding `com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.15.2`
+  (matching Spark 3.5.x's bundled Jackson version) directly to the shared
+  `infra/spark/spark-defaults.conf`'s `spark.jars.packages`, so every Spark process
+  (master/worker/Thrift Server/ad-hoc backend sessions) gets the fix from one place instead of
+  duplicating `--packages` overrides per service.
+- **Zombie Spark application starving the Thrift Server of worker cores** — a stuck batch job
+  from an earlier guided-project run (`fifa-guided-project-ingest`) still held all 32 worker
+  cores (`WARN TaskSchedulerImpl: Initial job has not accepted any resources`); diagnosed via
+  `curl http://spark-master:8080/json/` (worker `coresused`/`activeapps`), fixed by killing it
+  (`curl -X POST http://spark-master:8080/app/kill/ -d "id=<appId>&terminate=true"`). To prevent
+  recurrence, the Thrift Server (a permanently-running app) is now capped with
+  `--conf spark.cores.max=8`, leaving cores free for future batch/ingest jobs.
+- **Cross-engine catalog-name mismatch** — Trino and Spark expose the same underlying Iceberg
+  warehouse under different catalog aliases (`iceberg` vs `catalog`). A table browsed via the
+  tree (fed by Trino's catalog listing) would fail with `TABLE_OR_VIEW_NOT_FOUND` if run against
+  Spark verbatim. Fixed in `ExplorerPage.tsx`'s `handleSelectTable`: when the Spark engine is
+  selected and the browsed catalog is `iceberg`, the generated query substitutes `catalog`
+  instead, so tree-driven previews work correctly on either engine.
+
+**Known limitation carried forward:** the Catalog page (`/catalog`) and SQL Analytics page
+(`/sql`) remain separate, pre-existing pages and were intentionally left untouched — this phase
+only rebuilt Data Explorer (`/explorer`).
+
+## Phase 22 — Data Explorer: Real PySpark Code Execution Mode
+
+User follow-up: the SQL editor's "Run via Spark" only sends SQL text through the Spark Thrift
+Server (a SQL-only HiveServer2 endpoint) — it cannot run actual PySpark (DataFrame API, etc.).
+This phase adds a second Data Explorer mode that executes real, user-submitted PySpark code.
+
+| Item | Status | Notes |
+|---|---|---|
+| Backend: ad-hoc `SparkSession` runner | ✅ | `app/core/spark_code_runner.py` — a lazily-created, process-wide singleton `SparkSession` connected to `spark://spark-master:7077`, capped at `spark.cores.max=4`; `run_code()` execs the submitted code with `spark`/`sc` pre-bound and captures stdout/stderr via `contextlib.redirect_stdout/stderr` |
+| Backend: `pyspark==3.5.9` + JRE in the backend image | ✅ | `backend/requirements.txt` adds `pyspark==3.5.9` (matches the cluster's Spark version); `backend/Dockerfile` adds `default-jre-headless` (Debian trixie has no `openjdk-17-jre-headless` package; resolves to OpenJDK 21, which interoperates fine as a client JVM against the Java 17 cluster) |
+| Backend: shared Spark config via `SPARK_CONF_DIR` | ✅ | `docker-compose.yml`'s `backend` service sets `SPARK_CONF_DIR=/opt/spark-conf` and bind-mounts `infra/spark/spark-defaults.conf` read-only there, so the ad-hoc session picks up the same Iceberg REST catalog config as every other Spark process without duplicating it in Python; `spark.eventLog.enabled` is overridden to `false` for this session since the backend container has no `spark-events` volume mounted |
+| Backend: new `/spark-code` API + history table | ✅ | `app/api/v1/spark_code.py` — `POST /jobs` (submit, 202), `GET /jobs/{id}` (poll), `POST /jobs/{id}/cancel` (best-effort `sparkContext.cancelJobGroup`), `GET /history`; same in-memory registry + background-thread pattern as `/sql/queries`; persisted to a new `spark_code_executions` table (migration `0008_spark_code_executions`) |
+| Backend: role-gated (more powerful than SQL) | ✅ | `CAN_RUN_SPARK_CODE = require_roles("ADMIN", "DATA_ENGINEER")` on every endpoint — arbitrary code execution (`exec()`) is a materially higher-privilege action than SQL, so it's restricted to the same roles that already manage pipelines/connections/git, unlike the SQL editor which any authenticated user can use |
+| Frontend: "SQL Editor" / "PySpark Code" mode toggle | ✅ | `ExplorerPage.tsx` — a tab bar above the editor; the PySpark tab is visibly disabled (with a tooltip) for users without `ADMIN`/`DATA_ENGINEER`; switching modes preserves both editors' state independently |
+| Frontend: PySpark code editor + console output | ✅ | Same dark editor styling as the SQL mode (Ctrl/Cmd+Enter to run), but the results panel renders a monospace console (`<pre>`) of captured stdout/stderr instead of a results table, plus a status/duration badge |
+| **Real code execution — browser E2E** | ✅ | Ran `df = spark.sql("SELECT * FROM catalog.bronze.fifa_player_matches LIMIT 5"); df.show(); print("rows:", df.count())` — real `df.show()` ASCII table (actual FIFA row data) plus `rows: 5` rendered in the console output, `FINISHED` in `25461 ms`; confirmed via `spark-master`'s `/json/` endpoint that the ad-hoc session (`openlakehouse-explorer-pyspark`) registered with exactly `4` cores alongside the Thrift Server's `8` |
+
+**Bugs found and fixed this phase:**
+- **`FileNotFoundException: File file:/opt/spark/spark-events does not exist`** — the shared
+  `spark-defaults.conf` enables event logging to a path that only exists as a volume in the
+  Spark master/worker/Thrift Server containers, not the backend. Fixed by overriding
+  `spark.eventLog.enabled=false` specifically for the backend's ad-hoc `SparkSession` (this
+  `.config(...)` builder call takes precedence over the conf file).
+- **`openjdk-17-jre-headless` has no installation candidate** — the backend's `python:3.11-slim`
+  base image is now on Debian trixie, which dropped Java 17 packages in favor of 21. Fixed by
+  installing `default-jre-headless` instead of pinning a specific OpenJDK major version.
+
+**Known limitation carried forward:** cancellation of a running PySpark code job is best-effort
+(`sparkContext.cancelJobGroup` stops in-flight Spark stages, but pure-Python code with no active
+Spark job can't be forcibly interrupted mid-`exec()`); the ad-hoc session is a single shared
+`SparkSession` per backend process, so concurrent code submissions share the same JVM/executors.
+
+## Phase 23 — Data Explorer Context Menu + Pipeline Node Visual Redesign
+
+User follow-up: asked for right-click actions on the catalog tree (copy name, preview 100 rows,
+etc.) and for pipeline canvas nodes to look visually distinct per node type instead of a plain
+white box with a colored border.
+
+| Item | Status | Notes |
+|---|---|---|
+| Frontend: reusable context menu | ✅ | `frontend/src/components/ContextMenu.tsx` — a generic fixed-position popup menu (closes on outside click, Escape, or scroll) rendering an arbitrary list of `{ label, onSelect }` items |
+| Frontend: global toast notifications | ✅ | `frontend/src/components/Toast.tsx` — a `ToastProvider`/`useToast()` context, mounted once in `main.tsx` around `<App/>`; used for "Copied ..." feedback (no toast system existed previously — clipboard copies elsewhere in the app were silent) |
+| Frontend: catalog tree right-click actions | ✅ | `ExplorerPage.tsx` — catalog (copy name), schema (copy name / copy fully-qualified), table (preview first 100 rows, copy name, copy fully-qualified name, copy `SELECT` statement, run row count), column (copy name, copy qualified `table.column`); all reuse the existing engine-aware `iceberg`/`catalog` alias translation logic instead of duplicating it |
+| Frontend: redesigned pipeline nodes | ✅ | `PipelinesPage.tsx` — replaced the plain bordered-box node with a custom `@xyflow/react` node type (`nodeTypes={{ pipelineNode }}`): a colored card per kind (source=blue, transform=emerald, quality=amber, destination=violet) with an icon, node type + kind label, and a live run-status badge/ring |
+| **Real verification — browser E2E** | ✅ | Right-clicked `fifa_player_matches` in the tree → ran "Row count" → real `SELECT COUNT(*)` executed via Trino, returned `54600`; "Copy fully qualified name" produced a toast `Copied "iceberg.bronze.fifa_player_matches"`. Loaded the `fifa_gold_top_scorers` pipeline and confirmed each node (source/transform/destination) renders with its own color, icon, and kind label |
+
+**Known limitation carried forward:** the context menu is scoped to the Data Explorer's catalog
+tree only; the Catalog page's own tree (`/catalog`) and Pipelines page's canvas nodes do not yet
+have an equivalent right-click menu.
+
+## Phase 24 — Compute Process Dashboard + Kill Actions
+
+User follow-up: asked for the Compute page to show detailed process-level information (not just
+aggregate counters) and to be able to kill a runaway process from the UI.
+
+| Item | Status | Notes |
+|---|---|---|
+| Backend: Spark application list | ✅ | `get_spark_applications()` (`backend/app/core/compute_client.py`) reads the Spark Master's own `/json/` endpoint (`activeapps`/`completedapps`) — id, name, user, cores, memory/executor, submit date, state, duration |
+| Backend: kill a Spark application | ✅ | `kill_spark_application()` — `POST {spark_master_url}/app/kill/` with `id`/`terminate` form fields, the exact same request the Master web UI's own "kill" link issues; requires `spark.ui.killEnabled=true` (now set explicitly in `infra/spark/spark-defaults.conf`, Spark's own default) |
+| Backend: Trino query list | ✅ | `get_trino_queries()` — `GET /v1/query` on the coordinator, returns id/query text (truncated)/user/state/elapsed/queued time for every query Trino still tracks |
+| Backend: kill a Trino query | ✅ | `kill_trino_query()` — Trino's documented `DELETE /v1/query/{queryId}` |
+| Backend: Jupyter kernel list | ✅ | `get_jupyter_kernels()` — `GET /api/kernels`, returns id/name/execution_state/connections/last_activity |
+| Backend: kill a Jupyter kernel | ✅ | `kill_jupyter_kernel()` — Jupyter Server's documented `DELETE /api/kernels/{id}` |
+| API | ✅ | `GET /api/v1/compute/status` now also returns `spark_applications`/`trino_queries`/`jupyter_kernels`; three new endpoints `POST /compute/{spark/applications,trino/queries,jupyter/kernels}/{id}/kill`, gated by `require_roles("ADMIN", "DATA_ENGINEER")` and audit-logged (`SPARK_APPLICATION_KILLED`/`TRINO_QUERY_KILLED`/`JUPYTER_KERNEL_KILLED`) |
+| Frontend: process tables | ✅ | `ComputePage.tsx` — three new tables (Spark applications, Trino queries, Jupyter kernels) below the existing summary cards, with a per-row **Kill** button (only for rows that are actually killable: running Spark apps, `RUNNING`/`QUEUED` Trino queries, any Jupyter kernel), a `window.confirm` prompt, and a toast on success/failure; Kill buttons are hidden for viewers without `ADMIN`/`DATA_ENGINEER` |
+| **Real verification — browser E2E** | ✅ | Logged in as `engineer.user` (`DATA_ENGINEER`); Compute page rendered 28 real historical Trino queries (real SQL text, `FINISHED`/`FAILED` states) and 2 real Jupyter kernels; clicked **Kill** on one kernel, confirmed the dialog, and watched the kernel count drop from 2 to 1 in both the process table and the summary card — a real `DELETE /api/kernels/{id}` round trip, not a local-state removal |
+
+**Known limitation carried forward:** the Spark Master only remembers applications/completed-apps
+since its own last restart (in-memory, not persisted) — recreating the `spark-master` container
+(e.g. after a config change) clears that history, same as the Spark Master web UI itself.
+
+## Phase 25 — 12 UX/feature fixes + Advanced Pipeline Execution Engine
+
+User follow-up: a batch of 12 requested fixes/improvements across the No-Code Builder, Monitoring
+page, Spark Code sessions, and an ER Diagram viewer, plus a brand-new step-by-step pipeline
+execution engine unlocking control flow, sub-pipelines, SQL/Python/PySpark code nodes, variables,
+and REST API ingestion as first-class pipeline node kinds.
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| 1 | Spark Code session idle-timeout + manual stop | ✅ | `spark_code_runner.py`: idle-watcher daemon thread auto-stops the shared `SparkSession` after `spark_code_idle_timeout_seconds` (default 900s) of no use; new `GET /v1/spark-code/session/status` + `POST /v1/spark-code/session/stop` (audit-logged); `ExplorerPage.tsx` polls status every 15s and shows a live/idle indicator + a confirm-gated "Stop session" button |
+| 2 | Monitoring dashboard summary | ✅ | `MonitoringPage.tsx`: derives (no backend change) overall health %, total/up/down target counts, and a per-service grouped badge row from the existing Prometheus targets list, shown above the pre-existing raw targets table |
+| 3 | Pipeline node label canvas-sync bug | ✅ | `PipelinesPage.tsx`: the Label input's `onChange` now also updates the React Flow node's `data.label` (was only updating the side-panel `nodeMeta` state, so the canvas card kept showing the old label) |
+| 4 | Pipeline control flow (`if` / `for_each`) | ✅ | New node kind `control`, types `if`/`for_each`. `if` evaluates a restricted Python expression over the run's `variables` dict and skips an explicit `true_skip_nodes`/`false_skip_nodes` node-id list (config-driven, not graph-inferred). `for_each` iterates a list variable and re-runs an explicit `body_node_ids` list once per item (body nodes are excluded from the pipeline's normal top-level execution order to avoid double-running) |
+| 5 | Sub-pipeline node | ✅ | New node kind `sub_pipeline`, type `call`. Looks up another saved `Pipeline` by `config.pipeline_id` and executes it inline in the same run/Trino session, with a cycle guard (`call_stack`) and optional variable-sharing (`config.pass_variables`, default `true`) |
+| 6 | SQL / Python / PySpark code nodes | ✅ | New node kind `code`, types `sql`/`python`/`pyspark`. `sql` runs an arbitrary statement (supports `{{var}}` templating) and can store the first result cell into a variable; `python`/`pyspark` run arbitrary code with a shared `variables` dict bound by reference (PySpark reuses the existing shared `spark_code_runner` session). Running a pipeline containing a `python`/`pyspark` code node now requires the `ADMIN` or `DATA_ENGINEER` role (`requires_elevated_role()` check, 403 otherwise) |
+| 7 | Variable node | ✅ | New node kind `variable`, types `literal` (constant value, supports `{{other_var}}` substitution) / `from_query` (runs a SQL query, stores the first cell of the first row) |
+| 8 | API ingestion node | ✅ | New node kind `api_ingestion`, types `rest_get`/`rest_post`. Makes a real `httpx` call (URL supports `{{var}}` templating, optional headers) and stores the parsed JSON response into a variable |
+| 9 | Drag-and-drop node palette | ✅ | `PipelinesPage.tsx`: palette buttons are now `draggable`; dropping onto the canvas uses `ReactFlowInstance.screenToFlowPosition()` to place the new node exactly under the cursor (click-to-add at a random position still works too) |
+| 10 | Collapsible node-palette categories | ✅ | Each node kind's palette section is now a native `<details>/<summary>` (collapsible), open by default |
+| 11 | Sidebar collapse | ✅ | `MainLayout.tsx`: new collapse toggle persisted to `localStorage`; collapsed sidebar shows icon-only nav with `title` tooltips at `w-14`, expanded is the original `w-64` with full labels |
+| 12 | ER Diagram viewer | ✅ | New `GET /v1/catalog/er-diagram?catalog=&schema=` (`backend/app/api/v1/catalog.py`) heuristically infers foreign-key relationships from `<entity>_id`-named columns matched against naive-pluralized table-name candidates (no real FK metadata exists in Iceberg/Trino) — explicitly documented as best-effort. New `ERDiagramPage.tsx` (React Flow) renders tables as cards (🔑 marker for guessed primary/foreign keys) and relationships as labeled arrows; new nav entry |
+| Backend engine architecture | ✅ | New `backend/app/core/pipeline_executor.py`: a parallel step-by-step execution engine that only activates when a pipeline definition contains any of the 5 new "advanced" node kinds (`has_advanced_nodes()`); source/transform/quality/destination nodes are still compiled via the existing `pipeline_compiler.py` helpers (now exposed as public wrapper functions) but materialize to real Trino views under `iceberg.tmp` instead of SQL CTEs, so they can be freely interleaved with advanced nodes. Pipelines using **only** the original 4 node kinds are unaffected — they still compile to one single SQL statement exactly as before (100% backward compatible) |
+| Wiring | ✅ | `backend/app/api/v1/pipelines.py`: `_run_pipeline()` branches to `run_advanced_pipeline()` when `has_advanced_nodes()` is true; `POST /pipelines/{id}/run` enforces the elevated-role check; the two `/compile` endpoints now return a friendly 400 ("use Run instead of Compile") for advanced pipelines since they have no single compiled SQL statement to preview |
+| Frontend node-type support | ✅ | `PipelinesPage.tsx`: added palette entries, colors/icons (`BeakerIcon`/`TerminalIcon`/`GitBranchIcon`/`PlugIcon`/`BoxStackIcon`), and structured config forms (including a new multi-line `textarea` field kind for SQL/Python/PySpark code) for all 9 new node types; any config key not covered by a structured field is still editable via the pre-existing "Advanced: raw JSON" fallback section |
+| **Real verification — backend script test** | ✅ | Built a `variable(literal)` → `code(sql)` pipeline definition and called `run_advanced_pipeline()` directly inside the running `backend` container against the live Trino instance: `run.status == "SUCCESS"`, the variable node recorded `greeting = 'hello'`, the SQL code node recorded `Query executed` with `row_count == 1` — confirms the engine's variable assignment, SQL execution, and per-node run recording all work end-to-end with real infrastructure (not mocked). Test rows cleaned up afterward |
+| Docker rebuild/redeploy | ✅ | `docker compose build backend frontend` (caught and fixed one pre-existing unrelated TS build error — unused `CARD_Y_GAP` const in `ERDiagramPage.tsx`) then `docker compose up -d backend frontend --force-recreate`; both containers came up healthy with clean `pipeline_executor` imports |
+
+**Known limitations carried forward:**
+- The advanced engine's `PipelineNodeRun` rows are inserted directly with their final status
+  (no upfront `PENDING` placeholder row per node like the legacy single-SQL engine) — the run
+  detail view won't show not-yet-reached nodes as `PENDING` while an advanced pipeline is still
+  `RUNNING`. Functionally correct, cosmetic difference only.
+- `for_each` loop iterations and `sub_pipeline` calls record node runs with a suffixed
+  `node_id` (e.g. `mynode[0]`) that won't exactly match the canvas node's id — the run-history
+  list still shows the correct per-iteration detail, but canvas status-highlighting may not
+  reflect individual loop iterations.
+- `if`/`for_each` require the node-id lists they operate on (`true_skip_nodes`/
+  `false_skip_nodes`/`body_node_ids`) to be typed explicitly into the raw-JSON config — they are
+  **not** inferred from which nodes are visually wired to which branch/loop-body in the canvas.
+- This session's implementation work was verified via a direct backend script test (real Trino,
+  real DB) and via `get_errors`/Docker build success for the frontend — it was **not** yet
+  exercised end-to-end through the browser UI (no live click-through test of the new node types,
+  drag-and-drop, sidebar collapse, monitoring dashboard, or ER diagram page in this session).
+
+
 
 All 19 numbered phases plus the unofficial Phase 20 (completing spec sections 32/33 and every
-remaining frontend placeholder) have been implemented, deployed with real Docker containers, and
+remaining frontend placeholder), Phase 21 (Data Explorer tree + advanced SQL editor + Spark
+query engine), Phase 22 (Data Explorer real PySpark code execution mode), Phase 23 (Data
+Explorer right-click context menu + visually redesigned pipeline nodes), Phase 24 (Compute
+process dashboard + kill actions), and Phase 25 (12 UX/feature fixes + the Advanced Pipeline
+Execution Engine unlocking control flow/sub-pipelines/code nodes/variables/API ingestion) have
+been implemented, deployed with real Docker containers, and
 verified with real functional tests (no mocked data, no stubbed services) — see each phase's
 section above for the specific verification performed. The platform runs as a single
 `docker compose --profile full up -d` deployment with all services healthy and interoperating
@@ -518,7 +701,26 @@ None. See "OpenLakehouse implementation: COMPLETE" above.
 - JupyterLab's PyPI extension manager fails to initialize (`httpx.AsyncClient() got an
   unexpected keyword argument 'proxies'`, an httpx/jupyterlab version mismatch) and falls back
   to a read-only extension manager; does not affect notebook creation/execution.
+- Trino and Spark refer to the shared Iceberg/Polaris warehouse under different catalog names
+  (`iceberg` vs `catalog`). SQL written by hand in the Data Explorer / SQL Analytics editors must
+  use the catalog name matching the currently-selected engine; only the Data Explorer's
+  click-to-preview tree auto-translates this for you.
+- The Spark Thrift Server is capped at `spark.cores.max=8` and the backend's ad-hoc PySpark
+  session at `spark.cores.max=4`, out of the 32-core dev worker, so neither can permanently
+  starve other batch/ingest Spark jobs; this also means Spark-engine queries and PySpark code
+  jobs in Data Explorer have a fixed, modest amount of parallelism (fine for interactive/demo use).
+- Data Explorer's "PySpark Code" mode executes arbitrary user-submitted Python server-side via
+  `exec()` against a shared `SparkSession` — intentionally restricted to `ADMIN`/`DATA_ENGINEER`
+  roles, the same trust level already implied by the platform's Jupyter notebooks.
+- The catalog-tree right-click context menu exists only in Data Explorer (`/explorer`); the
+  Catalog page (`/catalog`) and the Pipelines canvas nodes do not have an equivalent menu yet.
+- Killing a Spark application via the Master's `/app/kill/` form endpoint is the same mechanism
+  the Master web UI itself uses, but it is not a formally documented public REST API (unlike
+  Trino's `DELETE /v1/query/{id}` or Jupyter's `DELETE /api/kernels/{id}`, which are); if a future
+  Spark upgrade changes that internal endpoint, only the Spark kill action would need revisiting.
 
 ## Next Steps
 
-None — all 19 numbered phases plus Phase 20 are complete and verified, and the frontend has no remaining placeholder pages. Flink remains legitimately out of scope (see Phase 20 notes above).
+None — all 19 numbered phases plus Phase 20, Phase 21, Phase 22, Phase 23, and Phase 24 are
+complete and verified, and the frontend has no remaining placeholder pages. Flink remains
+legitimately out of scope (see Phase 20 notes above).

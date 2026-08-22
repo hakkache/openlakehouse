@@ -6,7 +6,9 @@ import WorkspacePage from '../pages/WorkspacePage'
 import NotebooksPage from '../pages/NotebooksPage'
 import SQLPage from '../pages/SQLPage'
 import PipelinesPage from '../pages/PipelinesPage'
+import DbtPage from '../pages/DbtPage'
 import LineagePage from '../pages/LineagePage'
+import ERDiagramPage from '../pages/ERDiagramPage'
 import QualityPage from '../pages/QualityPage'
 import StreamingPage from '../pages/StreamingPage'
 import AssistantPage from '../pages/AssistantPage'
@@ -33,8 +35,10 @@ export default function App() {
         <Route path="/sql" element={<SQLPage />} />
         <Route path="/pipelines" element={<PipelinesPage />} />
         <Route path="/nocode" element={<PipelinesPage />} />
+        <Route path="/dbt" element={<DbtPage />} />
         <Route path="/jobs" element={<JobsPage />} />
         <Route path="/lineage" element={<LineagePage />} />
+        <Route path="/er-diagram" element={<ERDiagramPage />} />
         <Route path="/quality" element={<QualityPage />} />
         <Route path="/streaming" element={<StreamingPage />} />
         <Route path="/catalog" element={<CatalogPage />} />
